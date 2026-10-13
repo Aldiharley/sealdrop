@@ -326,7 +326,8 @@ pub fn extract<R: Read>(
     // 2. Temp dir inside out_dir so the final rename is atomic on the same volume.
     fs::create_dir_all(out_dir)?;
     let final_path = out_dir.join(&meta.root);
-    if final_path.exists() && !overwrite {
+    // `symlink_metadata`: a dangling or any other symlink at the target also counts.
+    if fs::symlink_metadata(&final_path).is_ok() && !overwrite {
         return Err(Error::Exists(final_path));
     }
     let tmp = tempfile::Builder::new()
@@ -397,14 +398,14 @@ pub fn extract<R: Read>(
 
     // 3. Move into place.
     let staged = tmp.path().join(&meta.root);
-    if overwrite && final_path.exists() {
-        if final_path.is_dir() {
-            fs::remove_dir_all(&final_path)?;
-        } else {
-            fs::remove_file(&final_path)?;
+    if fs::symlink_metadata(&final_path).is_ok() {
+        if !overwrite {
+            return Err(Error::Exists(final_path));
         }
+        replace(&final_path, &staged, tmp)?;
+    } else {
+        fs::rename(&staged, &final_path)?;
     }
-    fs::rename(&staged, &final_path)?;
     Ok(ExtractReport {
         root: final_path,
         files: seen.len(),
@@ -413,9 +414,116 @@ pub fn extract<R: Read>(
     })
 }
 
+/// Suffix of the sibling an overwritten target is parked under until the new tree is in.
+pub const OLD_SUFFIX: &str = ".sealdrop-old-";
+
+fn remove_any(p: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(p) {
+        Ok(md) if md.is_dir() => fs::remove_dir_all(p),
+        Ok(_) => fs::remove_file(p).or_else(|_| fs::remove_dir(p)),
+        Err(e) => Err(e),
+    }
+}
+
+/// Replaces `target` with `staged` without ever deleting the old data first: park the old
+/// target beside it, move the new tree in, then remove the parked copy. If the move fails
+/// the old target is put back and the staged tree is kept (its path is in the error).
+fn replace(target: &Path, staged: &Path, tmp: tempfile::TempDir) -> Result<()> {
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let backup = target.with_file_name(format!(
+        "{name}{OLD_SUFFIX}{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    ));
+    fs::rename(target, &backup)?;
+    if let Err(e) = fs::rename(staged, target) {
+        let restored = fs::rename(&backup, target).is_ok();
+        let kept = tmp.keep();
+        return Err(Error::Other(format!(
+            "could not move the opened files into place ({e}); {} the new copy is in {}",
+            if restored {
+                "the previous version was left as it was;".to_string()
+            } else {
+                format!("the previous version is in {};", backup.display())
+            },
+            kept.display()
+        )));
+    }
+    // Best effort: the new tree is in place either way.
+    let _ = remove_any(&backup);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overwrite_replaces_the_tree_and_leaves_no_parked_copy() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        let tree = src.join("findings");
+        std::fs::create_dir_all(tree.join("sub")).unwrap();
+        std::fs::write(tree.join("a.txt"), b"new").unwrap();
+        std::fs::write(tree.join("sub/b.txt"), b"new b").unwrap();
+        let (_, tar) = crate::pack::pack(&tree, Vec::new()).unwrap();
+
+        let out = d.path().join("out");
+        let old = out.join("findings");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("a.txt"), b"old").unwrap();
+        std::fs::write(old.join("stale.txt"), b"stale").unwrap();
+
+        // Without overwrite the existing tree is refused and untouched.
+        let err = extract(&tar[..], &out, &Limits::default(), false).unwrap_err();
+        assert!(matches!(err, Error::Exists(_)), "{err}");
+        assert_eq!(std::fs::read(old.join("a.txt")).unwrap(), b"old");
+
+        let rep = extract(&tar[..], &out, &Limits::default(), true).unwrap();
+        assert_eq!(rep.files, 2);
+        assert_eq!(std::fs::read(old.join("a.txt")).unwrap(), b"new");
+        assert_eq!(std::fs::read(old.join("sub/b.txt")).unwrap(), b"new b");
+        assert!(!old.join("stale.txt").exists());
+        let leftovers: Vec<String> = std::fs::read_dir(&out)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "findings")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+
+        // A plain file in the way is replaced the same way.
+        std::fs::remove_dir_all(&old).unwrap();
+        std::fs::write(&old, b"a file").unwrap();
+        extract(&tar[..], &out, &Limits::default(), true).unwrap();
+        assert!(old.is_dir());
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_move_restores_the_previous_tree() {
+        let d = tempfile::tempdir().unwrap();
+        let target = d.path().join("findings");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("a.txt"), b"old").unwrap();
+        let tmp = tempfile::tempdir_in(d.path()).unwrap();
+        // The staged tree does not exist, so the move fails.
+        let err = replace(&target, &tmp.path().join("missing"), tmp).unwrap_err();
+        assert!(err.to_string().contains("left as it was"), "{err}");
+        assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), b"old");
+        let parked = std::fs::read_dir(d.path())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(OLD_SUFFIX)
+            })
+            .count();
+        assert_eq!(parked, 0);
+    }
 
     #[test]
     fn accepts_normal_payload_paths() {
