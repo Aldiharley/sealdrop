@@ -294,6 +294,8 @@ Timed release:
 
 Behaviour:
 
+- `seal` canonicalizes `<path>` first (so `.` and `..` work) and refuses an output
+  folder inside the input folder.
 - `seal` with no `-r` and no `--passphrase` fails with a usage error.
 - `seal` always adds the sender's own recipient unless `--no-self` (so the sender can
   reopen), except in passphrase modes and timed release, where it would bypass the
