@@ -504,9 +504,9 @@ After a successful seal the grid reorganises: left `.span-7` = the "Sealed" resu
    Seal      │ Package     report-q3.sealdrop.age        ( Copy )  │ │ recipient.                           │
              │ Manifest    report-q3.manifest.json                 │ │                                      │
   ╭─────╮    │ Signature   report-q3.manifest.json.minisig         │ │ 2. Give them the passphrase another  │
-  │ [v] │    │                                                     │ │ way, such as a phone call. Do not    │
+  │ [v] │    │                                                     │ │ way, such as a phone call. Don't     │
   ╰─────╯    │ Package id  3f2a91c0-7d44-4b0e-9a1f-c5d2e8b71e04    │ │ put both in one message.             │
-   Open      │ SHA-256     9c1f...e0a4                  ( Copy )   │ │                                      │
+   Open      │ SHA-256     9c1f3a7b…e0a4                ( Copy )   │ │                                      │
              │ Size        48.3 MB, 12 files                       │ │ 3. They open the package in sealdrop │
   ╭─────╮    │                                                     │ │ (Open).                              │
   │ [/] │    │ ( Copy folder path )   ( Seal another )             │ │                                      │
@@ -515,7 +515,7 @@ After a successful seal the grid reorganises: left `.span-7` = the "Sealed" resu
              ╭─────────────────────────────────────────────────────╮ ╭──────────────────────────────────────╮
   ╭─────╮    │ PASSPHRASE, SHOWN ONCE                              │ │ TIMED RELEASE                        │
   │[o-] │    │                                                     │ │                                      │
-  ╰─────╯    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐  ┌──────────────────┐ │ │ Timed release: 10 minutes after      │
+  ╰─────╯    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐  ┌─ QR ─────────────┐ │ │ Timed release: 10 minutes after      │
    Keys      │ ┆                           ┆  │                  │ │ │ first open.                          │
              │ ┆ abacus · cargo · drift ·  ┆  │  ████ ██ ██████  │ │ │                                      │
              │ ┆ eagle · fable · galaxy    ┆  │  ███  █ █ ███ █  │ │ │ The recipient can open this only     │
@@ -686,7 +686,7 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 | Tile title | Delivery record |
 | OK row | Signature valid. Signed by [name] (trusted). |
 | OK row | Package matches its signed hash. |
-| Unknown signer row (warning) | Signed by a key you haven't trusted: [short key]. Check it with the sender, then trust it to continue. |
+| Unknown signer row (warning) | Signer not trusted: [short key]. Check it with the sender, then trust it to continue. |
 | Button | Trust this signer… (opens the Name field and "Trust this signer", same copy as Verify) |
 | Failed row (error) | This package failed verification. It may have been changed after it was sealed. Don't open it. |
 | Advisory row (warning glyph) | Advisory date [date]. No software enforces it. |
@@ -837,7 +837,7 @@ Purpose: check a package's signature and ciphertext hash without decrypting anyt
              │ Classification  confidential                        │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
              │ Advisory date   2026-12-31 (not enforced)           │ │                                      │
              │ Recipients      1 (x25519)                          │ │ Service key (optional)               │
-             │ SHA-256         9c1f...e0a4   ( Copy )              │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+             │ SHA-256         9c1f3a7b…e0a4   ( Copy )            │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
              │ Timed release   10 minutes after first open         │ │ ┆ Paste the service key            ┆ │
   ╭─────╮    │                 release.example.org                 │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
   │ [=] │    │                                                     │ │ Enter the service key from the       │
@@ -1089,7 +1089,7 @@ Header: title "Keys"; subtitle "Your identity, trusted signers and receipts."
 
 ## 8. Screen: Settings
 
-Purpose: set the release service and deposit token, choose passphrase options (with the honest Argon2id note), and set defaults. These settings are stored locally. The release service address below is the only address sealdrop will contact on your behalf; see Network.
+Purpose: set the release service and deposit token, choose passphrase options (with the honest Argon2id note), and set defaults. These settings are stored locally. Network use is limited to the release services described under Network.
 
 ### 8.1 Wireframe
 
@@ -1258,7 +1258,7 @@ Secrets
 Honesty
 
 - Say or imply that expiry removes decrypted content. The Seal sentence appears on Seal; the expiry sentence appears on Open and Verify. Never write "self-destruct", "revoke", "erase" or "secure" about a package.
-- Decide expiry from the local clock. The countdown is a display of the service's `expires_at`; the service is the authority.
+- Decide expiry from the local clock. The countdown ticks from the service's `remaining_secs` sample; the service is the authority, and `expires_at` is shown only as a timestamp.
 - Treat an unknown signer as fine. It is a warning that blocks opening until the user trusts the key or enters the expected key.
 - Hide the Argon2id caveat. The note is always visible next to the toggle and again wherever Argon2id is used.
 
