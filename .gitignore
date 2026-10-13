@@ -1,0 +1,50 @@
+# build output
+/target/
+**/target/
+/apps/desktop/dist/
+/apps/desktop/src-tauri/gen/
+/apps/desktop/src-tauri/target/
+node_modules/
+*.tsbuildinfo
+.vite/
+
+# keys, identities, packages — never commit (test fixtures live under testkit/ and tests/fixtures/)
+*.age
+!testkit/**
+!crates/**/tests/fixtures/**
+*.minisig
+*.sealdrop.age
+*.manifest.json
+*.receipt.json
+identity.txt
+sign.key
+sign.pub
+*.key
+*.pem
+*.p12
+*.pfx
+releases.db
+releases.db-*
+service.key
+service.pub
+
+# env and secrets
+.env
+.env.*
+*.token
+.higgsfield/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# scratch
+/tmp/
+/scratch/
+*.log
+.superpowers/
