@@ -52,6 +52,8 @@ pub enum ExtractError {
     UnlistedFile(String),
     #[error("entry root {0} does not match meta root")]
     WrongRoot(String),
+    #[error("duplicate path in meta.json: {0}")]
+    DuplicatePath(String),
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +81,18 @@ pub fn check_path(p: &str) -> std::result::Result<String, ExtractError> {
     }
     for comp in rel.split('/') {
         if comp.is_empty() || comp == "." || comp == ".." {
+            return Err(bad());
+        }
+        // Windows silently strips trailing spaces and dots, so `CON ` aliases `CON` and
+        // `a.` aliases `a`.
+        if comp.ends_with(' ') || comp.ends_with('.') {
+            return Err(bad());
+        }
+        // Control characters and characters Windows forbids in names.
+        if comp
+            .bytes()
+            .any(|b| b < 0x20 || matches!(b, b'<' | b'>' | b'"' | b'|' | b'?' | b'*'))
+        {
             return Err(bad());
         }
         let stem = comp.split('.').next().unwrap_or("").to_ascii_uppercase();
@@ -141,8 +155,12 @@ pub fn extract<R: Read>(
             return Err(ExtractError::WrongRoot(f.path.clone()).into());
         }
     }
-    let expected: HashMap<&str, &crate::pack::FileEntry> =
-        meta.files.iter().map(|f| (f.path.as_str(), f)).collect();
+    let mut expected: HashMap<&str, &crate::pack::FileEntry> = HashMap::new();
+    for f in &meta.files {
+        if expected.insert(f.path.as_str(), f).is_some() {
+            return Err(ExtractError::DuplicatePath(f.path.clone()).into());
+        }
+    }
 
     // 2. Temp dir inside out_dir so the final rename is atomic on the same volume.
     fs::create_dir_all(out_dir)?;
@@ -257,6 +275,11 @@ mod tests {
             "other/payload/x",
             "sealdrop/payload/",
             "sealdrop/payload/a\0b",
+            "sealdrop/payload/CON ",
+            "sealdrop/payload/a.",
+            "sealdrop/payload/a. /b",
+            "sealdrop/payload/x<y",
+            "sealdrop/payload/x\u{7}y",
         ] {
             assert!(check_path(bad).is_err(), "should reject {bad:?}");
         }

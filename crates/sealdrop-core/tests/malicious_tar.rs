@@ -117,6 +117,16 @@ fn rejects_unlisted_and_missing_files() {
 }
 
 #[test]
+fn rejects_duplicate_meta_paths() {
+    let meta = meta_json("r", &[("r/a", b"x"), ("r/a", b"x")]);
+    let t = tar_with(&meta, |b| add_file(b, "sealdrop/payload/r/a", b"x"));
+    assert!(matches!(
+        expect_extract_err(t),
+        ExtractError::DuplicatePath(_)
+    ));
+}
+
+#[test]
 fn rejects_missing_meta_and_oversized_meta() {
     let mut out = Vec::new();
     {
