@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, errText } from "../lib/api";
 import { useApp } from "../lib/app";
 import { baseName, formatBytes, formatDate, hostOf, looksLikeSignerKey, parentDir, plural, recipientsText, shortSigner, windowText } from "../lib/format";
-import { G5, NOT_A_PACKAGE, VERIFY_FAILED, mapOpenError, mapReceiptFetchError, mapVerifyError } from "../lib/errors";
+import { G5, NOT_A_PACKAGE, VERIFY_FAILED, mapOpenError, mapVerifyError } from "../lib/errors";
 import type { VerifyFailure } from "../lib/errors";
 import { useDropTarget } from "../lib/dragdrop";
 import { mockQuery, useIdleClear, useOnceWhen, useProgress } from "../lib/hooks";
@@ -65,8 +65,6 @@ export default function Open({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [expired, setExpired] = useState(false);
-  const [clockBusy, setClockBusy] = useState(false);
-  const [clockError, setClockError] = useState<string | null>(null);
 
   // "Save to…" after a temporary open
   const [saveOpen, setSaveOpen] = useState(false);
@@ -164,9 +162,9 @@ export default function Open({ active }: { active: boolean }) {
     if (p) await choosePackage(p);
   }
 
-  async function recheck() {
+  async function recheck(keyOverride?: string) {
     if (!pkg) return;
-    const key = expected.trim();
+    const key = (keyOverride ?? expected).trim();
     if (key !== "" && !looksLikeSignerKey(key)) {
       setSignerErr("That isn't a valid signer key.");
       return;
@@ -286,36 +284,7 @@ export default function Open({ active }: { active: boolean }) {
     }
   }
 
-  /**
-   * Fresh service-clock sample after the countdown went stale (sleep/wake). Uses receipt_fetch on the
-   * package's manifest, which also writes <name>.receipt.json next to the manifest.
-   */
-  async function checkAgain() {
-    if (!pkg || !opened) return;
-    setClockBusy(true);
-    setClockError(null);
-    try {
-      const manifest = pkg.path.replace(/\.sealdrop\.age$/i, ".manifest.json");
-      const r = await api.receiptFetch(manifest);
-      setOpened((o) =>
-        o
-          ? {
-              ...o,
-              out: { ...o.out, remaining_secs: r.remaining_secs, first_unlock: r.first_unlock ?? o.out.first_unlock, expires_at: r.expires_at ?? o.out.expires_at },
-              sample: o.sample + 1,
-            }
-          : o,
-      );
-      setExpired(r.remaining_secs !== null && r.remaining_secs <= 0);
-    } catch (e) {
-      setClockError(mapReceiptFetchError(errText(e)));
-    } finally {
-      setClockBusy(false);
-    }
-  }
-
   function reset() {
-    setClockError(null);
     reqSeq.current++;
     setPkg(null);
     setPkgError(null);
@@ -479,12 +448,10 @@ export default function Open({ active }: { active: boolean }) {
                         sampleKey={opened.sample}
                         announce
                         onExpire={() => setExpired(true)}
-                        onCheckAgain={() => void checkAgain()}
-                        checkingAgain={clockBusy}
+                        staleNote="The time shown may be out of date. Open the package again to refresh it."
                       />
                     </div>
                   ) : null}
-                  {clockError ? <Notice tone="err">{clockError}</Notice> : null}
                   {o.first_unlock ? <div>First opened {formatDate(o.first_unlock)} (service clock)</div> : null}
                   <p style={{ margin: 0 }}>{TIMED_SENTENCE}</p>
                   <p style={{ margin: 0 }}>Files you have already restored are not removed when the timer ends.</p>
@@ -602,8 +569,12 @@ export default function Open({ active }: { active: boolean }) {
                       signerKey={outcome.key}
                       existing={existing}
                       onTrusted={() => {
+                        // Trusting means "use the manifest signer": drop any typed expected key
+                        // (and its error) so the re-check cannot trip on it.
                         setShowTrust(false);
-                        void recheck();
+                        setExpected("");
+                        setSignerErr(null);
+                        void recheck("");
                       }}
                     />
                   )}

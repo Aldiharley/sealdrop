@@ -761,7 +761,7 @@ export default function Seal({ active }: { active: boolean }) {
                     <span>Release service: {hostOf(service)}</span>
                     <LinkButton onClick={() => go("settings")}>Change in Settings</LinkButton>
                   </div>
-                  {!hasToken ? <Notice tone="warn">Set the release service address and deposit token in Settings (or set SEALDROP_RELEASE_TOKEN in your environment).</Notice> : null}
+                  {!hasToken ? <Notice tone="warn">Deposit token not set in Settings (or set SEALDROP_RELEASE_TOKEN in your environment).</Notice> : null}
                 </>
               )}
             </div>

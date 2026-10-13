@@ -24,6 +24,8 @@ interface CountdownProps {
    */
   onCheckAgain?: () => void;
   checkingAgain?: boolean;
+  /** Shown instead of a button when the display went stale and there is no way to re-sample here. */
+  staleNote?: string;
 }
 
 const THRESHOLDS: { at: number; text: string }[] = [
@@ -50,7 +52,7 @@ interface Sample {
  * monotonic timer (performance.now), never `expires_at` minus the wall clock. It only counts
  * down and then reads "expired"; enforcement is the release service.
  */
-export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, announce, onExpire, onCheckAgain, checkingAgain }: CountdownProps) {
+export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, announce, onExpire, onCheckAgain, checkingAgain, staleNote }: CountdownProps) {
   const [, setTick] = useState(0);
   const [msg, setMsg] = useState("");
   const sample = useRef<Sample | null>(null);
@@ -148,6 +150,7 @@ export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, annou
           Check again
         </SoftButton>
       ) : null}
+      {stale && !onCheckAgain && staleNote ? <span className="field__helper" style={{ display: "block", marginTop: 8 }}>{staleNote}</span> : null}
       {announce ? (
         <span className="sr-only" aria-live="polite">
           {msg}
