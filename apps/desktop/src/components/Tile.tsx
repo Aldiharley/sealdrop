@@ -21,7 +21,11 @@ export function Tile({ title, headingRef, headingFocusable, headingClass = "labe
   return (
     <section className={`neu-tile${className ? ` ${className}` : ""}`} aria-labelledby={title ? id : undefined} {...rest}>
       {title ? (
-        <h2 id={id} ref={headingRef} className={headingClass} tabIndex={headingFocusable ? -1 : undefined} style={{ margin: "0 0 12px" }}>
+        <h2
+          id={id}
+          ref={headingRef}
+          className={headingFocusable ? `${headingClass} no-ring` : headingClass}
+          tabIndex={headingFocusable ? -1 : undefined} style={{ margin: "0 0 12px" }}>
           {title}
         </h2>
       ) : null}

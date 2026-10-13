@@ -370,7 +370,7 @@ export default function Open({ active }: { active: boolean }) {
               <div className="stack">
                 <div className="row" style={{ alignItems: "flex-start" }}>
                   <GlyphOk />
-                  <h3 ref={headingRef} tabIndex={-1} className="lead">
+                  <h3 ref={headingRef} tabIndex={-1} className="lead no-ring">
                     Opened.
                   </h3>
                 </div>

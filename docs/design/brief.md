@@ -330,7 +330,7 @@ Grid: left `.span-7` = tiles A ("What to send") and B ("Who can open it"); right
 | C Timed release | Tile, Toggle, Field number+unit, sentence (text), service line + SoftButton link |
 | D Details | Tile, Field disclosure; revealed: Field text (classification), Field date (advisory expiry), Toggle (ASCII armor) |
 | E Save to | Tile, Field path + SoftButton "Choose…", Pill `progress`, status text, SoftButton primary "Seal" |
-| After success | Tile (Sealed), Tile (Sending it), Tile (Passphrase, passphrase mode), Tile (Timed release, timed only); SoftButton "Copy folder path", "Seal another", "Copy", "Hide"; Chip `word`; QR (see below) |
+| After success | Tile (Passphrase, passphrase mode; first in the left column so it is above the fold at 760 px), Tile (Sealed), Tile (Sending it), Tile (Timed release, timed only); SoftButton "Copy folder path", "Seal another", "Copy", "Hide"; Chip `word`; QR (see below) |
 
 ### 4.3 Copy
 

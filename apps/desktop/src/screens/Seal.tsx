@@ -385,57 +385,7 @@ export default function Seal({ active }: { active: boolean }) {
         <FirstRunBanner />
         <div className="cols-12">
           <div className="span-7 stack">
-            <Tile title="Sealed">
-              <div className="stack">
-                <div className="row" style={{ alignItems: "flex-start" }}>
-                  <GlyphOk />
-                  <h3 ref={sealedHeading} tabIndex={-1} className="lead">
-                    Sealed.
-                  </h3>
-                </div>
-                <div>
-                  3 files written to <span className="mono">{sealed.folder}</span>.
-                </div>
-                <div className="stack stack--sm">
-                  <KV k="Package">
-                    <span className="cluster" style={{ gap: 12 }}>
-                      <span className="mono">{pkgName}</span>
-                      <CopyButton text={o.package} ariaLabel="Copy package path" />
-                    </span>
-                  </KV>
-                  <KV k="Manifest" mono>
-                    {manName}
-                  </KV>
-                  <KV k="Signature" mono>
-                    {manName}.minisig
-                  </KV>
-                  <KV k="Package id" mono>
-                    {o.package_id}
-                  </KV>
-                  <KV k="SHA-256">
-                    <span className="cluster" style={{ gap: 12 }}>
-                      <span className="mono" title={o.ciphertext_sha256}>
-                        {shortHash(o.ciphertext_sha256)}
-                      </span>
-                      <CopyButton text={o.ciphertext_sha256} ariaLabel="Copy SHA-256" />
-                    </span>
-                  </KV>
-                  <KV k="Size">
-                    {formatBytes(o.bytes)}, {o.files} {plural(o.files, "file")}
-                  </KV>
-                </div>
-                <div className="cluster" style={{ gap: 12 }}>
-                  <CopyButton text={sealed.folder} label="Copy folder path" />
-                  <SoftButton size="sm" onClick={reset}>
-                    Seal another
-                  </SoftButton>
-                </div>
-                <p className="field__helper" style={{ margin: 0 }}>
-                  The package, manifest and signature must stay together.
-                </p>
-              </div>
-            </Tile>
-
+            {/* The passphrase comes first so it is above the fold at 760 px. */}
             {sealed.mode === "passphrase" ? (
               pass !== null ? (
                 <Tile title="Passphrase, shown once" headingRef={passHeading} headingFocusable>
@@ -482,6 +432,58 @@ export default function Seal({ active }: { active: boolean }) {
                 </Tile>
               )
             ) : null}
+
+            <Tile title="Sealed">
+              <div className="stack">
+                <div className="row" style={{ alignItems: "flex-start" }}>
+                  <GlyphOk />
+                  <h3 ref={sealedHeading} tabIndex={-1} className="lead no-ring">
+                    Sealed.
+                  </h3>
+                </div>
+                <div>
+                  3 files written to <span className="mono">{sealed.folder}</span>.
+                </div>
+                <div className="stack stack--sm">
+                  <KV k="Package">
+                    <span className="cluster" style={{ gap: 12 }}>
+                      <span className="mono">{pkgName}</span>
+                      <CopyButton text={o.package} ariaLabel="Copy package path" />
+                    </span>
+                  </KV>
+                  <KV k="Manifest" mono>
+                    {manName}
+                  </KV>
+                  <KV k="Signature" mono>
+                    {manName}.minisig
+                  </KV>
+                  <KV k="Package id" mono>
+                    {o.package_id}
+                  </KV>
+                  <KV k="SHA-256">
+                    <span className="cluster" style={{ gap: 12 }}>
+                      <span className="mono" title={o.ciphertext_sha256}>
+                        {shortHash(o.ciphertext_sha256)}
+                      </span>
+                      <CopyButton text={o.ciphertext_sha256} ariaLabel="Copy SHA-256" />
+                    </span>
+                  </KV>
+                  <KV k="Size">
+                    {formatBytes(o.bytes)}, {o.files} {plural(o.files, "file")}
+                  </KV>
+                </div>
+                <div className="cluster" style={{ gap: 12 }}>
+                  <CopyButton text={sealed.folder} label="Copy folder path" />
+                  <SoftButton size="sm" onClick={reset}>
+                    Seal another
+                  </SoftButton>
+                </div>
+                <p className="field__helper" style={{ margin: 0 }}>
+                  The package, manifest and signature must stay together.
+                </p>
+              </div>
+            </Tile>
+
           </div>
 
           <div className="span-5 stack">

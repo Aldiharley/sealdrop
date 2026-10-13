@@ -9,7 +9,7 @@ export function PageHead({ title, subtitle }: { title: string; subtitle: string 
   return (
     <header className="page-head">
       <div>
-        <h1 className="h1" tabIndex={-1} style={{ outline: "none" }}>{title}</h1>
+        <h1 className="h1 no-ring" tabIndex={-1}>{title}</h1>
         <div className="muted" style={{ marginTop: 4 }}>
           {subtitle}
         </div>

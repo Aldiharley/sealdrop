@@ -203,6 +203,10 @@ textarea.neu-inset { resize: none; display: block; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .hide { display: none !important; }
 .w-full { width: 100%; }
+/* Headings that only receive focus programmatically (tabindex="-1", to move screen-reader
+   focus after a step). Chromium treats programmatic focus as focus-visible, so
+   :focus:not(:focus-visible) is not enough; they never get a ring. */
+.no-ring, .no-ring:focus, .no-ring:focus-visible { outline: none; }
 
 /* ---- Motion and forced colours ----------------------------------- */
 @media (prefers-reduced-motion: reduce) {
