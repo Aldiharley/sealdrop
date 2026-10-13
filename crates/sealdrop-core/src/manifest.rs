@@ -27,6 +27,8 @@ pub struct ReleaseInfo {
     pub service: String,
     pub release_id: String,
     pub window_secs: u64,
+    /// The service's minisign public key (base64), pinned at seal time for receipt checks.
+    pub service_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

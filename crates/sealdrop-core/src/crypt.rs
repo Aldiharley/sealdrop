@@ -133,7 +133,7 @@ pub fn to_age_recipients(specs: &[Recipient]) -> Result<Vec<Box<dyn age::Recipie
 }
 
 /// Builds plugin identities from `AGE-PLUGIN-...` lines.
-pub fn plugin_identities(lines: &[String]) -> Result<Vec<Box<dyn age::Identity>>> {
+pub fn plugin_identities(lines: &[&str]) -> Result<Vec<Box<dyn age::Identity>>> {
     let mut by_plugin: BTreeMap<String, Vec<age::plugin::Identity>> = BTreeMap::new();
     for l in lines {
         let id = age::plugin::Identity::from_str(l.trim()).map_err(|_| Error::InvalidIdentity)?;
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn plugin_identities_rejects_invalid_line() {
         assert!(matches!(
-            plugin_identities(&["not an identity".to_string()]),
+            plugin_identities(&["not an identity"]),
             Err(Error::InvalidIdentity)
         ));
     }
