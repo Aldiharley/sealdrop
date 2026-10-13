@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::time::Duration;
 
 use age::{DecryptError, EncryptError};
 use age_core::format::{FileKey, Stanza};
@@ -29,6 +30,80 @@ struct InnerStanza {
 #[derive(Serialize, Deserialize)]
 struct InnerStanzas {
     stanzas: Vec<InnerStanza>,
+}
+
+/// Maximum number of inner stanzas, enforced on both wrap and unwrap.
+const MAX_INNER_STANZAS: usize = 64;
+/// Maximum size of the decrypted (and of the to-be-encrypted) inner-stanza JSON.
+const MAX_INNER_JSON: usize = 64 * 1024;
+
+/// Validates a service URL that came from a file header or the user before any request is
+/// built from it. Returns the URL without trailing slashes.
+///
+/// Accepted: `https://<host>[:port][/path]`; `http://` only for `localhost`, `127.0.0.1`
+/// and `[::1]`; and the test scheme `memory://<anything>`. Rejected: any `?`, `#`,
+/// whitespace or control character, plus `@` and `\` (userinfo / parser-confusion tricks).
+pub fn validate_service_url(s: &str) -> Result<String> {
+    let bad = |why: &str| Error::Release(format!("invalid service URL: {why}"));
+    if s.chars()
+        .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '?' | '#' | '@' | '\\'))
+    {
+        return Err(bad("forbidden character"));
+    }
+    let (scheme, rest) = s.split_once("://").ok_or_else(|| bad("missing scheme"))?;
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return Err(bad("missing host"));
+    }
+    if scheme == "memory" {
+        return Ok(format!("{scheme}://{}", rest.trim_end_matches('/')));
+    }
+    // Split host from optional :port.
+    let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
+        let end = v6.find(']').ok_or_else(|| bad("unterminated IPv6 host"))?;
+        let after = &v6[end + 1..];
+        let port = match after {
+            "" => None,
+            _ => Some(after.strip_prefix(':').ok_or_else(|| bad("bad port"))?),
+        };
+        (&authority[..end + 2], port)
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        }
+    };
+    if host.is_empty() {
+        return Err(bad("missing host"));
+    }
+    if let Some(p) = port {
+        if p.is_empty() || p.len() > 5 || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(bad("bad port"));
+        }
+    }
+    match scheme {
+        "https" => {}
+        "http" if matches!(host, "localhost" | "127.0.0.1" | "[::1]") => {}
+        "http" => return Err(bad("plain http is only allowed for loopback hosts")),
+        _ => return Err(bad("unsupported scheme")),
+    }
+    Ok(format!("{scheme}://{}", rest.trim_end_matches('/')))
+}
+
+/// Validates a release id: a lowercase hyphenated UUID.
+pub fn validate_release_id(s: &str) -> Result<()> {
+    match uuid::Uuid::parse_str(s) {
+        Ok(u) if u.hyphenated().to_string() == s => Ok(()),
+        _ => Err(Error::Release("invalid release id".into())),
+    }
+}
+
+fn agent() -> ureq::Agent {
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build(),
+    )
 }
 
 /// Secrets of one timed release. Deliberately not `Debug`.
@@ -60,6 +135,11 @@ impl Deposit {
     }
 }
 
+/// Wraps the inner recipients' stanzas under the service-held release key.
+///
+/// The unlock token is carried in the header by design: anyone holding the file can start
+/// the unlock window, but without an inner key or passphrase they still cannot read it.
+/// `service` should have passed [`validate_service_url`] (the CLI does this before use).
 pub struct Recipient {
     inner: Vec<Box<dyn age::Recipient + Send>>,
     k_release: Zeroizing<[u8; 32]>,
@@ -103,10 +183,20 @@ impl age::Recipient for Recipient {
         if inner.is_empty() {
             return Err(EncryptError::MissingRecipients);
         }
+        if inner.len() > MAX_INNER_STANZAS {
+            return Err(EncryptError::Io(std::io::Error::other(
+                "too many inner stanzas",
+            )));
+        }
         let json = Zeroizing::new(
             serde_json::to_vec(&InnerStanzas { stanzas: inner })
                 .map_err(|e| EncryptError::Io(std::io::Error::other(e)))?,
         );
+        if json.len() > MAX_INNER_JSON {
+            return Err(EncryptError::Io(std::io::Error::other(
+                "inner stanzas too large",
+            )));
+        }
         let mut nonce = [0u8; 12];
         rand::rng().fill_bytes(&mut nonce);
         let aead = ChaCha20Poly1305::new(&Key::from(*self.k_release));
@@ -177,6 +267,14 @@ impl age::Identity for Identity {
             Some(s) => s,
             None => return Some(Err(DecryptError::InvalidHeader)),
         };
+        // File-controlled values must never reach a URL unchecked.
+        let service = match validate_service_url(&service) {
+            Ok(s) => s,
+            Err(_) => return Some(Err(DecryptError::InvalidHeader)),
+        };
+        if validate_release_id(&stanza.args[0]).is_err() {
+            return Some(Err(DecryptError::InvalidHeader));
+        }
         let nonce = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[2]) {
             Ok(n) if n.len() == 12 => n,
             _ => return Some(Err(DecryptError::InvalidHeader)),
@@ -186,7 +284,7 @@ impl age::Identity for Identity {
             .unlock(&service, &stanza.args[0], &stanza.args[3])
         {
             Ok(u) => u,
-            Err(e) => return Some(Err(DecryptError::Io(std::io::Error::other(e.to_string())))),
+            Err(e) => return Some(Err(DecryptError::Io(std::io::Error::other(e)))),
         };
         let aead = ChaCha20Poly1305::new(&Key::from(*unlock.k_release));
         let mut n = [0u8; 12];
@@ -195,27 +293,27 @@ impl age::Identity for Identity {
             Ok(j) => Zeroizing::new(j),
             Err(_) => return Some(Err(DecryptError::DecryptionFailed)),
         };
+        if json.len() > MAX_INNER_JSON {
+            return Some(Err(DecryptError::InvalidHeader));
+        }
         let inner: InnerStanzas = match serde_json::from_slice(&json) {
             Ok(i) => i,
             Err(_) => return Some(Err(DecryptError::InvalidHeader)),
         };
-        if inner.stanzas.len() > 64 {
+        if inner.stanzas.len() > MAX_INNER_STANZAS {
             return Some(Err(DecryptError::InvalidHeader));
         }
-        let stanzas: Vec<Stanza> = inner
-            .stanzas
-            .into_iter()
-            .filter_map(|s| {
-                BASE64_STANDARD_NO_PAD
-                    .decode(s.body)
-                    .ok()
-                    .map(|body| Stanza {
-                        tag: s.tag,
-                        args: s.args,
-                        body,
-                    })
-            })
-            .collect();
+        let mut stanzas: Vec<Stanza> = Vec::with_capacity(inner.stanzas.len());
+        for s in inner.stanzas {
+            match BASE64_STANDARD_NO_PAD.decode(s.body) {
+                Ok(body) => stanzas.push(Stanza {
+                    tag: s.tag,
+                    args: s.args,
+                    body,
+                }),
+                Err(_) => return Some(Err(DecryptError::InvalidHeader)),
+            }
+        }
         *self.last.borrow_mut() = Some(unlock);
         match self.inner.iter().find_map(|i| i.unwrap_stanzas(&stanzas)) {
             Some(r) => Some(r),
@@ -250,11 +348,10 @@ pub struct HttpFetch;
 
 impl ReleaseFetch for HttpFetch {
     fn unlock(&self, service: &str, release_id: &str, unlock_token_b64: &str) -> Result<Unlock> {
-        let url = format!(
-            "{}/v1/releases/{release_id}/unlock",
-            service.trim_end_matches('/')
-        );
-        let res = ureq::post(&url).send_json(UnlockBody {
+        let service = validate_service_url(service)?;
+        validate_release_id(release_id)?;
+        let url = format!("{service}/v1/releases/{release_id}/unlock");
+        let res = agent().post(&url).send_json(UnlockBody {
             unlock_token: unlock_token_b64,
         });
         let mut res = match res {
@@ -290,13 +387,20 @@ impl ReleaseFetch for HttpFetch {
     }
 }
 
-pub fn deposit(service: &str, token: &str, d: &Deposit, package_sha256: &str) -> Result<()> {
-    let url = format!(
-        "{}/v1/releases/{}",
-        service.trim_end_matches('/'),
-        d.release_id
-    );
-    ureq::put(&url)
+#[derive(Deserialize)]
+struct DepositResponse {
+    service_key: String,
+}
+
+/// Deposits the release key with the service. The service answers `201` with
+/// `{ "service_key": "<minisign public key, base64>" }`; that key is returned so the caller
+/// can record it in the manifest and later pin receipt verification to it.
+pub fn deposit(service: &str, token: &str, d: &Deposit, package_sha256: &str) -> Result<String> {
+    let service = validate_service_url(service)?;
+    validate_release_id(&d.release_id)?;
+    let url = format!("{service}/v1/releases/{}", d.release_id);
+    let mut res = agent()
+        .put(&url)
         .header("Authorization", &format!("Bearer {token}"))
         .send_json(DepositBody {
             k_release: BASE64_STANDARD_NO_PAD.encode(*d.k_release),
@@ -305,7 +409,19 @@ pub fn deposit(service: &str, token: &str, d: &Deposit, package_sha256: &str) ->
             package_sha256,
         })
         .map_err(|e| Error::Release(format!("deposit failed: {e}")))?;
-    Ok(())
+    if res.status().as_u16() != 201 {
+        return Err(Error::Release(format!(
+            "deposit failed: unexpected status {}",
+            res.status().as_u16()
+        )));
+    }
+    let body: DepositResponse = res
+        .body_mut()
+        .read_json()
+        .map_err(|e| Error::Release(format!("deposit response: {e}")))?;
+    minisign::PublicKey::from_base64(&body.service_key)
+        .map_err(|_| Error::Release("service returned an invalid signing key".into()))?;
+    Ok(body.service_key)
 }
 
 // ---------- receipts ----------
@@ -349,6 +465,13 @@ pub fn sign_receipt(
     })
 }
 
+/// Verifies the receipt's signature and parses it.
+///
+/// With `expected_service_key = None` this checks integrity against the key embedded in the
+/// receipt only (trust-on-first-use): anyone can mint a receipt under their own key.
+/// Callers MUST pass the key recorded in the manifest for authenticity, and must compare
+/// `release_id` / `package_sha256` against the manifest themselves, or use
+/// [`verify_receipt_for`] which does all of that.
 pub fn verify_receipt(s: &SignedReceipt, expected_service_key: Option<&str>) -> Result<Receipt> {
     let r: Receipt =
         serde_json::from_str(&s.receipt_json).map_err(|e| Error::Verify(e.to_string()))?;
@@ -375,12 +498,39 @@ pub fn verify_receipt(s: &SignedReceipt, expected_service_key: Option<&str>) -> 
     Ok(r)
 }
 
+/// Fully pinned receipt verification: signature under `expected_service_key`, the receipt
+/// names exactly this `release_id` and `package_sha256`, and the signed trusted comment is
+/// `sealdrop receipt <release_id>`.
+pub fn verify_receipt_for(
+    s: &SignedReceipt,
+    expected_service_key: &str,
+    release_id: &str,
+    package_sha256: &str,
+) -> Result<Receipt> {
+    let r = verify_receipt(s, Some(expected_service_key))?;
+    if r.release_id != release_id {
+        return Err(Error::Verify("receipt is for a different release".into()));
+    }
+    if r.package_sha256 != package_sha256 {
+        return Err(Error::Verify("receipt is for a different package".into()));
+    }
+    let sig = minisign::SignatureBox::from_string(&s.signature)
+        .map_err(|e| Error::Verify(e.to_string()))?;
+    let comment = sig
+        .trusted_comment()
+        .map_err(|e| Error::Verify(e.to_string()))?;
+    if comment != format!("sealdrop receipt {release_id}") {
+        return Err(Error::Verify("receipt trusted comment mismatch".into()));
+    }
+    Ok(r)
+}
+
 pub fn fetch_receipt(service: &str, token: &str, release_id: &str) -> Result<SignedReceipt> {
-    let url = format!(
-        "{}/v1/releases/{release_id}/receipt",
-        service.trim_end_matches('/')
-    );
-    let mut res = ureq::get(&url)
+    let service = validate_service_url(service)?;
+    validate_release_id(release_id)?;
+    let url = format!("{service}/v1/releases/{release_id}/receipt");
+    let mut res = agent()
+        .get(&url)
         .header("Authorization", &format!("Bearer {token}"))
         .call()
         .map_err(|e| Error::Release(format!("receipt fetch failed: {e}")))?;
@@ -477,12 +627,237 @@ mod tests {
         let other = age::x25519::Identity::generate();
         let id = Identity::new(vec![Box::new(other)], Box::new(MemoryFetch::serving(&d)));
         let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(id)];
-        assert!(crate::crypt::decrypt_reader(&ct[..], &ids).is_err());
+        match crate::crypt::decrypt_reader(&ct[..], &ids).err() {
+            Some(Error::Decrypt(age::DecryptError::NoMatchingKeys)) => {}
+            other => panic!("expected NoMatchingKeys, got {other:?}"),
+        }
 
         // Expired service answer surfaces as an error.
         let id = Identity::new(vec![Box::new(x)], Box::new(MemoryFetch::expired()));
         let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(id)];
+        // The fetch error keeps its type, so callers can downcast `ReleaseExpired`.
+        match crate::crypt::decrypt_reader(&ct[..], &ids).err() {
+            Some(Error::Decrypt(age::DecryptError::Io(e))) => {
+                let inner = e.get_ref().and_then(|i| i.downcast_ref::<Error>());
+                assert!(matches!(inner, Some(Error::ReleaseExpired)), "{inner:?}");
+            }
+            other => panic!("expected wrapped ReleaseExpired, got {other:?}"),
+        }
+    }
+
+    const UUID: &str = "0b1d6a52-8f0e-4c1c-9d1e-5c2b7a3f4e60";
+
+    fn craft_stanza(json: &[u8], d: &Deposit) -> Stanza {
+        let nonce = [7u8; 12];
+        let aead = ChaCha20Poly1305::new(&Key::from(*d.k_release));
+        let body = aead.encrypt(&Nonce::from(nonce), json).unwrap();
+        Stanza {
+            tag: TAG.into(),
+            args: vec![
+                UUID.into(),
+                BASE64_STANDARD_NO_PAD.encode(b"https://s"),
+                BASE64_STANDARD_NO_PAD.encode(nonce),
+                d.unlock_token_b64(),
+            ],
+            body,
+        }
+    }
+
+    #[test]
+    fn rejects_non_https_service_and_bad_release_id() {
+        for bad in [
+            "http://evil.example",
+            "ftp://x",
+            "https://h/x?y",
+            "https://h/x#f",
+            "javascript:alert(1)",
+            "https://h x",
+            "https://user@evil.example",
+            "https://",
+            "http://127.0.0.1:notaport",
+        ] {
+            assert!(validate_service_url(bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            validate_service_url("http://127.0.0.1:8787").unwrap(),
+            "http://127.0.0.1:8787"
+        );
+        assert_eq!(
+            validate_service_url("https://release.example/").unwrap(),
+            "https://release.example"
+        );
+        assert!(validate_service_url("http://localhost:1").is_ok());
+        assert!(validate_service_url("http://[::1]:8787").is_ok());
+        assert!(validate_service_url("memory://svc").is_ok());
+        assert!(validate_release_id(UUID).is_ok());
+        for bad in [
+            "not-a-uuid",
+            "../../etc/passwd",
+            "0B1D6A52-8F0E-4C1C-9D1E-5C2B7A3F4E60",
+            "0b1d6a528f0e4c1c9d1e5c2b7a3f4e60",
+            "",
+        ] {
+            assert!(validate_release_id(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn identity_refuses_hostile_header_values_without_fetching() {
+        struct Boom;
+        impl ReleaseFetch for Boom {
+            fn unlock(&self, _: &str, _: &str, _: &str) -> Result<Unlock> {
+                panic!("fetch must not be reached");
+            }
+        }
+        let d = Deposit::new(60);
+        let id = Identity::new(Vec::new(), Box::new(Boom));
+        let mut st = craft_stanza(b"{\"stanzas\":[]}", &d);
+        st.args[1] = BASE64_STANDARD_NO_PAD.encode(b"http://evil.example");
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&id, &st),
+            Some(Err(DecryptError::InvalidHeader))
+        ));
+        let mut st = craft_stanza(b"{\"stanzas\":[]}", &d);
+        st.args[0] = "../x".into();
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&id, &st),
+            Some(Err(DecryptError::InvalidHeader))
+        ));
+    }
+
+    #[test]
+    fn malformed_inner_json_is_rejected() {
+        let d = Deposit::new(60);
+        let id = Identity::new(Vec::new(), Box::new(MemoryFetch::serving(&d)));
+        // Bad base64 in an inner body is rejected, not skipped.
+        let bad = br#"{"stanzas":[{"tag":"X25519","args":[],"body":"!!!"}]}"#;
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&id, &craft_stanza(bad, &d)),
+            Some(Err(DecryptError::InvalidHeader))
+        ));
+        // Oversized decrypted JSON is rejected before parsing.
+        let big = vec![b' '; MAX_INNER_JSON + 1];
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&id, &craft_stanza(&big, &d)),
+            Some(Err(DecryptError::InvalidHeader))
+        ));
+        // More than 64 inner stanzas is rejected.
+        let one = r#"{"tag":"X25519","args":[],"body":"AAAA"}"#;
+        let many = format!(r#"{{"stanzas":[{}]}}"#, vec![one; 65].join(","));
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&id, &craft_stanza(many.as_bytes(), &d)),
+            Some(Err(DecryptError::InvalidHeader))
+        ));
+    }
+
+    #[test]
+    fn wrap_caps_inner_stanza_count() {
+        let d = Deposit::new(60);
+        let inner: Vec<Box<dyn age::Recipient + Send>> = (0..65)
+            .map(|_| {
+                Box::new(age::x25519::Identity::generate().to_public())
+                    as Box<dyn age::Recipient + Send>
+            })
+            .collect();
+        let rs: Vec<Box<dyn age::Recipient + Send>> =
+            vec![Box::new(Recipient::new(inner, &d, "https://s"))];
+        assert!(crate::crypt::encrypt_writer(Vec::new(), &rs, false).is_err());
+    }
+
+    #[test]
+    fn inner_scrypt_round_trip_and_wrong_passphrase() {
+        let pass = SecretString::from("correct horse".to_string());
+        let d = Deposit::new(60);
+        let inner: Vec<Box<dyn age::Recipient + Send>> = vec![Box::new(
+            crate::crypt::scrypt_recipient(pass.clone(), 10).unwrap(),
+        )];
+        let rs: Vec<Box<dyn age::Recipient + Send>> = vec![Box::new(Recipient::new(
+            inner,
+            &d,
+            "https://release.example",
+        ))];
+        let mut w = crate::crypt::encrypt_writer(Vec::new(), &rs, false).unwrap();
+        w.write_all(b"timed pass").unwrap();
+        let ct = w.finish().unwrap();
+
+        let id = Identity::new(
+            vec![Box::new(crate::crypt::scrypt_identity(pass))],
+            Box::new(MemoryFetch::serving(&d)),
+        );
+        let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(id)];
+        let mut out = Vec::new();
+        crate::crypt::decrypt_reader(&ct[..], &ids)
+            .unwrap()
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, b"timed pass");
+
+        let wrong = SecretString::from("wrong".to_string());
+        let id = Identity::new(
+            vec![Box::new(crate::crypt::scrypt_identity(wrong))],
+            Box::new(MemoryFetch::serving(&d)),
+        );
+        let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(id)];
         assert!(crate::crypt::decrypt_reader(&ct[..], &ids).is_err());
+    }
+
+    fn receipt_for(kp: &minisign::KeyPair, id: &str, sha: &str) -> Receipt {
+        Receipt {
+            release_id: id.into(),
+            package_sha256: sha.into(),
+            first_unlock: None,
+            expires_at: None,
+            unlock_count: 0,
+            service_key: kp.pk.to_base64(),
+        }
+    }
+
+    #[test]
+    fn verify_receipt_for_pins_key_release_hash_and_comment() {
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let signed = sign_receipt(&receipt_for(&kp, "rid", "abc"), &kp.sk, &kp.pk).unwrap();
+        let key = kp.pk.to_base64();
+        assert!(verify_receipt_for(&signed, &key, "rid", "abc").is_ok());
+        assert!(verify_receipt_for(&signed, &key, "other", "abc").is_err());
+        assert!(verify_receipt_for(&signed, &key, "rid", "zzz").is_err());
+
+        // Expected key differs from the signer: rejected.
+        let other = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        assert!(verify_receipt_for(&signed, &other.pk.to_base64(), "rid", "abc").is_err());
+
+        // Trusted comment must name this release, even under the right key.
+        let r = receipt_for(&kp, "rid", "abc");
+        let json = serde_json::to_string_pretty(&r).unwrap();
+        let sig = minisign::sign(
+            Some(&kp.pk),
+            &kp.sk,
+            std::io::Cursor::new(json.as_bytes()),
+            Some("sealdrop receipt someone-else"),
+            None,
+        )
+        .unwrap();
+        let wrong_comment = SignedReceipt {
+            receipt_json: json,
+            signature: sig.into_string(),
+        };
+        assert!(verify_receipt(&wrong_comment, Some(&key)).is_ok());
+        assert!(verify_receipt_for(&wrong_comment, &key, "rid", "abc").is_err());
+    }
+
+    #[test]
+    fn unpinned_verify_receipt_trusts_the_embedded_key() {
+        // Documents the weakness: a receipt minted under an attacker key passes `None`.
+        let attacker = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let forged = sign_receipt(
+            &receipt_for(&attacker, "rid", "abc"),
+            &attacker.sk,
+            &attacker.pk,
+        )
+        .unwrap();
+        assert!(verify_receipt(&forged, None).is_ok());
+        let real = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        assert!(verify_receipt(&forged, Some(&real.pk.to_base64())).is_err());
+        assert!(verify_receipt_for(&forged, &real.pk.to_base64(), "rid", "abc").is_err());
     }
 
     #[test]
