@@ -175,9 +175,12 @@ ChaCha20-Poly1305 under `K_release` (random 12-byte nonce). The age header then
 contains exactly one stanza:
 
 ```
--> sealdrop-release <release_id> <service-url-b64> <nonce-b64>
+-> sealdrop-release <release_id> <service-url-b64> <nonce-b64> <unlock-token-b64>
 <ciphertext of inner stanzas>
 ```
+
+The unlock token travels in the stanza (not the manifest) so a timed package can be
+opened from the `.age` file alone; the manifest remains optional for `open`.
 
 Opening therefore requires **both** `K_release` from the service **and** the
 recipient's own key or passphrase. Timed release must be the only recipient
@@ -188,7 +191,7 @@ matching keys", as intended.
 **Deposit (sender, at seal).** `PUT /v1/releases/{release_id}` with
 `{ k_release, window_secs, unlock_token_hash, package_sha256 }`, authenticated by a
 deposit token the service operator issues to senders. `unlock_token` is 32 random
-bytes placed in the manifest; the service stores only its SHA-256.
+bytes placed in the stanza; the service stores only its SHA-256.
 
 **Unlock (recipient, at open).** `POST /v1/releases/{release_id}/unlock` with
 `{ unlock_token }`. On the first successful call the service records `first_unlock`
