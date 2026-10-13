@@ -1392,6 +1392,15 @@ mod tests {
         let err = open_impl(&ks, req, Box::new(NoNetwork), &NoProgress).unwrap_err();
         assert!(err.contains("needs a passphrase"), "{err}");
         assert!(!d.path().join("out").exists());
+
+        // Without the manifest beside it nothing says which key is inside: the probe reports
+        // timed with no inner kind, and the Open screen offers an optional passphrase field.
+        let (mpath, _) = sealdrop_core::seal::bundle_paths(&package);
+        std::fs::remove_file(mpath).unwrap();
+        let p = probe_impl(&package).unwrap();
+        assert!(p.timed_release.is_some());
+        assert_eq!(p.inner_kind, None);
+        assert!(!p.needs_passphrase);
     }
 
     #[test]

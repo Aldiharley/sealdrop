@@ -552,6 +552,79 @@ fn timed_release_with_passphrase_prompts_and_never_unlocks_without_it() {
 }
 
 #[test]
+fn timed_package_without_manifest_skip_verify_takes_an_optional_passphrase() {
+    let (service, token) = start_release_service();
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let rec = String::from_utf8(cmd(&home).arg("recipient").output().unwrap().stdout)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    let seal_timed = |outdir: &Path, mode: &[&str]| {
+        let out = cmd(&home)
+            .arg("seal")
+            .arg(fixture(d.path()))
+            .args(mode)
+            .args(["--expire-after", "10m", "--release-service", &service, "-o"])
+            .arg(outdir)
+            .env("SEALDROP_RELEASE_TOKEN", &token)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Only the package travels: no manifest, no signature.
+        std::fs::remove_file(outdir.join("report.manifest.json")).unwrap();
+        std::fs::remove_file(outdir.join("report.manifest.json.minisig")).unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    // Passphrase package: --passphrase-stdin opens it.
+    let p_dir = d.path().join("p");
+    let text = seal_timed(&p_dir, &["--passphrase", "--kdf-profile", "test"]);
+    let pass = text
+        .lines()
+        .find_map(|l| l.strip_prefix("passphrase:"))
+        .unwrap()
+        .trim()
+        .to_string();
+    cmd(&home)
+        .arg("open")
+        .arg(p_dir.join("report.sealdrop.age"))
+        .args(["--skip-verify", "--passphrase-stdin", "-o"])
+        .arg(d.path().join("rp"))
+        .write_stdin(format!("{pass}\n"))
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read(d.path().join("rp/report/sub/b.html")).unwrap(),
+        b"<p>x</p>"
+    );
+
+    // Key package: the optional prompt is shown, an empty answer uses the identity.
+    let k_dir = d.path().join("k");
+    seal_timed(&k_dir, &["-r", &rec]);
+    cmd(&home)
+        .arg("open")
+        .arg(k_dir.join("report.sealdrop.age"))
+        .args(["--skip-verify", "-o"])
+        .arg(d.path().join("rk"))
+        .write_stdin("\n")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Passphrase (leave empty to use your key): ",
+        ));
+    assert!(d.path().join("rk/report/a.pdf").exists());
+}
+
+#[test]
 fn manifest_strings_are_sanitized_before_printing() {
     let d = tempfile::tempdir().unwrap();
     let home = d.path().join("home");

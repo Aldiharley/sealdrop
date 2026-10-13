@@ -82,6 +82,11 @@ export default function Open({ active }: { active: boolean }) {
   // inner kind tells (the core re-checks before contacting the service).
   const needsPass =
     (probe?.needs_passphrase ?? false) || probe?.inner_kind === "scrypt" || probe?.inner_kind === "argon2id";
+  // A timed package opened without its manifest beside it: nothing says which key is inside,
+  // so the passphrase field is offered but optional (required only with no identity).
+  const optionalPass = probe !== null && timed && !needsPass && probe.inner_kind == null;
+  const hasPassField = needsPass || optionalPass;
+  const passRequired = needsPass || (optionalPass && identity !== null && !identity.exists);
   const hostName = hostOf(probe?.timed_release?.service) || (outcome?.kind === "ok" ? hostOf(outcome.v.release?.service) : "");
 
   function clearSecrets() {
@@ -185,12 +190,12 @@ export default function Open({ active }: { active: boolean }) {
   }
 
   // ----- gating -----
-  const keyPkgNoIdentity = probe !== null && !needsPass && identity !== null && !identity.exists;
+  const keyPkgNoIdentity = probe !== null && !hasPassField && identity !== null && !identity.exists;
   let reason: string | null = null;
   if (!pkg || probe === null) reason = checking && pkg ? `Checking ${pkg.name}…` : "Choose a package first.";
   else if (checking) reason = `Checking ${pkg.name}…`;
   else if (keyPkgNoIdentity) reason = "Create your identity in Keys first.";
-  else if (needsPass && passphrase === "") reason = "Enter the passphrase.";
+  else if (passRequired && passphrase === "") reason = "Enter the passphrase.";
   else if (!skipVerify && signerErr) reason = signerErr;
   else if (!skipVerify && outcome?.kind === "untrusted") reason = "Trust the signer or enter their key first.";
   else if (!skipVerify && outcome?.kind === "failed") {
@@ -217,7 +222,7 @@ export default function Open({ active }: { active: boolean }) {
         package: a.path,
         out_dir: useTemp ? null : (a.folder ?? parentDir(a.path)),
         temp: useTemp,
-        passphrase: a.needsPass ? a.passphrase : null,
+        passphrase: a.passphrase,
         signer: a.signer,
         skip_verify: a.skip,
         overwrite: a.overwrite,
@@ -243,7 +248,7 @@ export default function Open({ active }: { active: boolean }) {
       timed,
       host: hostName,
       windowSecs: outcome?.kind === "ok" ? (outcome.v.release?.window_secs ?? null) : null,
-      passphrase: needsPass ? passphrase : null,
+      passphrase: hasPassField && passphrase !== "" ? passphrase : null,
       folder,
       signer: expected.trim() || null,
       skip: skipVerify,
@@ -254,11 +259,11 @@ export default function Open({ active }: { active: boolean }) {
 
   async function saveTo() {
     if (!pkg || !opened) return;
-    if (needsPass && !saveOpen) {
+    if (hasPassField && !saveOpen) {
       setSaveOpen(true);
       return;
     }
-    if (needsPass && savePass === "") {
+    if (passRequired && savePass === "") {
       setSaveError("Enter the passphrase.");
       return;
     }
@@ -271,7 +276,7 @@ export default function Open({ active }: { active: boolean }) {
         package: pkg.path,
         out_dir: f,
         temp: false,
-        passphrase: needsPass ? savePass : null,
+        passphrase: hasPassField && savePass !== "" ? savePass : null,
         signer: expected.trim() || null,
         skip_verify: skipVerify,
         overwrite,
@@ -688,10 +693,10 @@ export default function Open({ active }: { active: boolean }) {
           <Tile title="Unlock">
             {probe === null ? (
               <span className="muted">Checking…</span>
-            ) : needsPass ? (
+            ) : hasPassField ? (
               <Field
                 key={`p-${passKey}`}
-                label="Passphrase"
+                label={needsPass ? "Passphrase" : "Passphrase (optional)"}
                 type="password"
                 value={passphrase}
                 onChange={(val) => {
@@ -699,7 +704,11 @@ export default function Open({ active }: { active: boolean }) {
                   if (error === WRONG_PASS) setError(null);
                 }}
                 placeholder="Type or paste the passphrase"
-                helper="Kept only until the package is opened."
+                helper={
+                  needsPass
+                    ? "Kept only until the package is opened."
+                    : "Needed only if this package was sealed with a passphrase."
+                }
                 invalid={error === WRONG_PASS}
                 disabled={busyWork}
                 onEnter={onOpenClick}

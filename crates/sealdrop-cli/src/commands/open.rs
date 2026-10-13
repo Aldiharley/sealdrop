@@ -77,17 +77,29 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         }
         out!("Opening it starts or continues the window on the service's clock.");
     }
+    let prompt = if p.needs_passphrase {
+        Prompt::Required
+    } else {
+        needs_prompt(
+            p.release.is_some(),
+            inner_kind.as_deref(),
+            ks.has_identity(),
+        )
+    };
     let passphrase = if a.passphrase_stdin {
         Some(read_line_secret()?)
-    } else if p.needs_passphrase
-        || inner_kind
-            .as_deref()
-            .is_some_and(sealdrop_core::open::is_passphrase_kind)
-    {
-        eprint!("passphrase (typing is shown; use --passphrase-stdin to pipe it): ");
-        Some(read_line_secret()?)
     } else {
-        None
+        match prompt {
+            Prompt::Required => {
+                eprint!("passphrase (typing is shown; use --passphrase-stdin to pipe it): ");
+                Some(read_line_secret()?)
+            }
+            Prompt::Optional => {
+                eprint!("Passphrase (leave empty to use your key): ");
+                read_line_optional()?
+            }
+            Prompt::None => None,
+        }
     };
     let rep = open(
         &ks,
@@ -131,6 +143,41 @@ pub fn run(a: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether `open` asks for a passphrase.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Prompt {
+    /// The package needs one: ask, and refuse an empty answer.
+    Required,
+    /// It may need one: ask, and an empty answer means "use my key".
+    Optional,
+    None,
+}
+
+/// The prompt for a package whose header shows no passphrase stanza. `inner_kind` is the
+/// manifest's `recipients[0].kind` (verified, or unverified under `--skip-verify`), `None`
+/// when there is no manifest to read. Only a timed package can hide a passphrase stanza
+/// (inside its release stanza); without a manifest nothing says which key is inside, so the
+/// prompt is optional, or required when there is no identity to fall back on.
+pub fn needs_prompt(timed: bool, inner_kind: Option<&str>, has_identity: bool) -> Prompt {
+    if !timed {
+        return Prompt::None;
+    }
+    match inner_kind {
+        Some(k) if sealdrop_core::open::is_passphrase_kind(k) => Prompt::Required,
+        Some(_) => Prompt::None,
+        None if has_identity => Prompt::Optional,
+        None => Prompt::Required,
+    }
+}
+
+/// Reads one line from stdin; an empty line (or end of input) is `None`.
+fn read_line_optional() -> anyhow::Result<Option<SecretString>> {
+    let mut line = Zeroizing::new(String::new());
+    std::io::stdin().lock().read_line(&mut line)?;
+    let pass = line.trim_end_matches(['\r', '\n']);
+    Ok((!pass.is_empty()).then(|| SecretString::from(pass.to_string())))
+}
+
 /// Reads one line from stdin without keeping a plain copy of it around.
 fn read_line_secret() -> anyhow::Result<SecretString> {
     let mut line = Zeroizing::new(String::new());
@@ -138,4 +185,26 @@ fn read_line_secret() -> anyhow::Result<SecretString> {
     let pass = line.trim_end_matches(['\r', '\n']);
     anyhow::ensure!(!pass.is_empty(), "no passphrase on stdin");
     Ok(SecretString::from(pass.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{needs_prompt, Prompt};
+
+    #[test]
+    fn prompt_decision() {
+        // Not timed: the header shows any passphrase stanza; nothing to add.
+        assert_eq!(needs_prompt(false, None, true), Prompt::None);
+        assert_eq!(needs_prompt(false, Some("scrypt"), true), Prompt::None);
+        // Timed, manifest says passphrase: required, identity or not.
+        for kind in ["scrypt", "argon2id"] {
+            assert_eq!(needs_prompt(true, Some(kind), true), Prompt::Required);
+            assert_eq!(needs_prompt(true, Some(kind), false), Prompt::Required);
+        }
+        // Timed, manifest says a key: no prompt.
+        assert_eq!(needs_prompt(true, Some("x25519"), true), Prompt::None);
+        // Timed, no manifest: optional with an identity to fall back on, else required.
+        assert_eq!(needs_prompt(true, None, true), Prompt::Optional);
+        assert_eq!(needs_prompt(true, None, false), Prompt::Required);
+    }
 }

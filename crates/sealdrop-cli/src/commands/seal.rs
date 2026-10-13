@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args as ClapArgs, ValueEnum};
 use sealdrop_core::argon2id::Profile;
 use sealdrop_core::crypt::{Recipient, SCRYPT_HIGH_LOG_N};
-use sealdrop_core::passphrase::WordList;
+use sealdrop_core::passphrase::{Passphrase, WordList};
 use sealdrop_core::policy::PolicyError;
 use sealdrop_core::seal::{seal, Kdf, Mode, ReleaseConfig, SealRequest};
 use sealdrop_core::Error;
@@ -182,6 +182,25 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         &super::StderrProgress,
     )?;
 
+    // The passphrase is the only copy of the key: show it before anything else, and if it
+    // cannot be shown, remove the package rather than leave one nobody can open.
+    if let Some(p) = &res.passphrase {
+        let files = [&res.package, &res.manifest, &res.signature];
+        show_passphrase_first(&mut std::io::stdout().lock(), p, || {
+            for f in files {
+                let _ = std::fs::remove_file(f);
+            }
+        })?;
+        if a.qr {
+            let code = qrcode::QrCode::new(p.joined().as_bytes())?;
+            out!(
+                "{}",
+                code.render::<qrcode::render::unicode::Dense1x2>()
+                    .quiet_zone(true)
+                    .build()
+            );
+        }
+    }
     out!("sealed: {}", res.package.display());
     out!("manifest: {}", res.manifest.display());
     out!("signature: {}", res.signature.display());
@@ -196,24 +215,78 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         out!("This does not protect the contents once decrypted.");
         out!("If the package is never opened, the service forgets the key after its retention period (operator default: 90 days).");
     }
-    if let Some(p) = &res.passphrase {
-        out!("passphrase: {}", *p.joined());
-        out!(
-            "entropy: {:.1} bits - send it on a different channel from the file",
-            p.entropy_bits
-        );
-        if a.qr {
-            let code = qrcode::QrCode::new(p.joined().as_bytes())?;
-            out!(
-                "{}",
-                code.render::<qrcode::render::unicode::Dense1x2>()
-                    .quiet_zone(true)
-                    .build()
-            );
-        }
-        if use_argon2id {
-            out!("note: Argon2id mode is non-standard; this file will not open in stock age tools");
-        }
+    if res.passphrase.is_some() && use_argon2id {
+        out!("note: Argon2id mode is non-standard; this file will not open in stock age tools");
     }
     Ok(())
+}
+
+/// Writes the passphrase and entropy lines. On any write failure (a closed pipe included)
+/// `cleanup` runs and the error is a plain failure (exit 1), never the quiet closed-pipe
+/// exit: a sealed package whose passphrase nobody saw must not survive.
+fn show_passphrase_first<W: std::io::Write>(
+    w: &mut W,
+    p: &Passphrase,
+    cleanup: impl FnOnce(),
+) -> anyhow::Result<()> {
+    let shown = crate::write_line(w, format_args!("passphrase: {}", *p.joined())).and_then(|()| {
+        crate::write_line(
+            w,
+            format_args!(
+                "entropy: {:.1} bits - send it on a different channel from the file",
+                p.entropy_bits
+            ),
+        )
+    });
+    if shown.is_err() {
+        cleanup();
+        anyhow::bail!("passphrase could not be shown; package removed");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::show_passphrase_first;
+    use sealdrop_core::passphrase::{generate, WordList};
+    use std::cell::Cell;
+    use std::io::Write;
+
+    /// Fails from the very first write, like stdout piped into a reader that has gone.
+    struct ClosedPipe;
+    impl Write for ClosedPipe {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn unshown_passphrase_removes_the_package_and_exits_1() {
+        let p = generate(WordList::Eff, 6);
+        let cleaned = Cell::new(false);
+        let err = show_passphrase_first(&mut ClosedPipe, &p, || cleaned.set(true)).unwrap_err();
+        assert!(cleaned.get(), "the bundle must be removed");
+        assert_eq!(
+            err.to_string(),
+            "passphrase could not be shown; package removed"
+        );
+        // Not the quiet closed-pipe exit 0 the other commands use.
+        assert!(!crate::is_quiet_exit(&err));
+        assert_eq!(crate::exit_code_for(&err), 1);
+    }
+
+    #[test]
+    fn passphrase_lines_come_first_and_nothing_is_removed() {
+        let p = generate(WordList::Eff, 6);
+        let mut out = Vec::new();
+        show_passphrase_first(&mut out, &p, || panic!("must not clean up")).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], format!("passphrase: {}", *p.joined()));
+        assert!(lines[1].starts_with("entropy: 77.5 bits"));
+    }
 }
