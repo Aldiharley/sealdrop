@@ -11,7 +11,7 @@ use base64::prelude::{Engine, BASE64_STANDARD_NO_PAD};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const TAG: &str = "sealdrop-argon2id";
 const SALT_LEN: usize = 16;
@@ -56,16 +56,28 @@ impl Profile {
     }
 }
 
-fn derive(pass: &SecretString, salt: &[u8], params: Params) -> Result<Zeroizing<[u8; 32]>, String> {
+/// Why a derivation did not produce a key. `BadParams` means the parameters themselves are
+/// invalid (a malformed header); `Failed` is any other Argon2 failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeriveError {
+    BadParams,
+    Failed,
+}
+
+fn derive(
+    pass: &SecretString,
+    salt: &[u8],
+    params: Params,
+) -> Result<Zeroizing<[u8; 32]>, DeriveError> {
     let p = argon2::Params::new(params.m_kib, params.t, params.p, Some(32))
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| DeriveError::BadParams)?;
     let a = Argon2::new(Algorithm::Argon2id, Version::V0x13, p);
     let mut full_salt = Vec::with_capacity(DOMAIN.len() + salt.len());
     full_salt.extend_from_slice(DOMAIN);
     full_salt.extend_from_slice(salt);
     let mut out = Zeroizing::new([0u8; 32]);
     a.hash_password_into(pass.expose_secret().as_bytes(), &full_salt, out.as_mut())
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| DeriveError::Failed)?;
     Ok(out)
 }
 
@@ -94,7 +106,7 @@ impl age::Recipient for Recipient {
         let mut salt = [0u8; SALT_LEN];
         rand::rng().fill_bytes(&mut salt);
         let key = derive(&self.pass, &salt, self.params)
-            .map_err(|e| EncryptError::Io(std::io::Error::other(e)))?;
+            .map_err(|e| EncryptError::Io(std::io::Error::other(format!("argon2id: {e:?}"))))?;
         let aead = ChaCha20Poly1305::new(&Key::from(*key));
         let body = aead
             .encrypt(&Nonce::from([0u8; 12]), file_key.expose_secret().as_slice())
@@ -125,6 +137,17 @@ impl Identity {
     }
 }
 
+/// Reject parameters above `MAX` before any derivation is attempted.
+fn check_bounds(p: Params) -> Result<(), DecryptError> {
+    if p.t > MAX.t || p.m_kib > MAX.m_kib || p.p > MAX.p {
+        return Err(DecryptError::ExcessiveWork {
+            required: log2_ceil(p.m_kib),
+            target: log2_ceil(MAX.m_kib),
+        });
+    }
+    Ok(())
+}
+
 fn log2_ceil(v: u32) -> u8 {
     (32 - v.saturating_sub(1).leading_zeros()) as u8
 }
@@ -150,24 +173,34 @@ impl age::Identity for Identity {
             (Some(t), Some(m), Some(p)) => (t, m, p),
             _ => return Some(Err(DecryptError::InvalidHeader)),
         };
-        if t > MAX.t || m_kib > MAX.m_kib || p > MAX.p {
-            return Some(Err(DecryptError::ExcessiveWork {
-                required: log2_ceil(m_kib),
-                target: log2_ceil(MAX.m_kib),
-            }));
+        // Argon2 requires m >= 8 * p (and so m >= 8); reject up front, no derivation attempted.
+        if m_kib < 8 || m_kib < p.saturating_mul(8) {
+            return Some(Err(DecryptError::InvalidHeader));
         }
-        let key = match derive(&self.pass, &salt, Params { t, m_kib, p }) {
+        let params = Params { t, m_kib, p };
+        if let Err(e) = check_bounds(params) {
+            return Some(Err(e));
+        }
+        let key = match derive(&self.pass, &salt, params) {
             Ok(k) => k,
-            Err(_) => return Some(Err(DecryptError::DecryptionFailed)),
+            Err(DeriveError::BadParams) => return Some(Err(DecryptError::InvalidHeader)),
+            Err(DeriveError::Failed) => return Some(Err(DecryptError::DecryptionFailed)),
         };
         let aead = ChaCha20Poly1305::new(&Key::from(*key));
         match aead.decrypt(&Nonce::from([0u8; 12]), stanza.body.as_slice()) {
-            Ok(pt) if pt.len() == FILE_KEY_BYTES => {
+            Ok(pt) => {
+                // Wiped on every arm.
+                let pt = Zeroizing::new(pt);
+                if pt.len() != FILE_KEY_BYTES {
+                    return Some(Err(DecryptError::DecryptionFailed));
+                }
                 let mut arr = [0u8; FILE_KEY_BYTES];
                 arr.copy_from_slice(&pt);
-                Some(Ok(FileKey::new(Box::new(arr))))
+                let fk = FileKey::new(Box::new(arr));
+                arr.zeroize();
+                Some(Ok(fk))
             }
-            _ => Some(Err(DecryptError::DecryptionFailed)),
+            Err(_) => Some(Err(DecryptError::DecryptionFailed)),
         }
     }
 }
@@ -175,6 +208,7 @@ impl age::Identity for Identity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
     use age::secrecy::ExposeSecret;
     use std::io::{Read, Write};
 
@@ -205,9 +239,10 @@ mod tests {
         assert_eq!(got.expose_secret(), fk.expose_secret());
 
         let wrong = Identity::new(SecretString::from("wrong".to_string()));
-        assert!(age::Identity::unwrap_stanza(&wrong, &stanzas[0])
-            .unwrap()
-            .is_err());
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&wrong, &stanzas[0]),
+            Some(Err(DecryptError::DecryptionFailed))
+        ));
         let other = Stanza {
             tag: "X25519".into(),
             args: vec![],
@@ -216,22 +251,99 @@ mod tests {
         assert!(age::Identity::unwrap_stanza(&id, &other).is_none());
     }
 
+    fn stanza(args: [&str; 4], body_len: usize) -> Stanza {
+        Stanza {
+            tag: TAG.into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            body: vec![0u8; body_len],
+        }
+    }
+
+    const SALT_OK: &str = "AAAAAAAAAAAAAAAAAAAAAA"; // 16 zero bytes
+
+    fn unwrap(st: &Stanza) -> Option<Result<FileKey, DecryptError>> {
+        age::Identity::unwrap_stanza(&Identity::new(SecretString::from("x".to_string())), st)
+    }
+
     #[test]
     fn refuses_excessive_parameters() {
-        let id = Identity::new(SecretString::from("x".to_string()));
-        let st = Stanza {
-            tag: TAG.into(),
-            args: vec![
-                "AAAAAAAAAAAAAAAAAAAAAA".into(),
-                "1".into(),
-                (4 * 1024 * 1024).to_string(),
-                "4".into(),
-            ],
-            body: vec![0u8; 32],
-        };
-        match age::Identity::unwrap_stanza(&id, &st) {
-            Some(Err(age::DecryptError::ExcessiveWork { .. })) => {}
-            _ => panic!("expected Some(Err(ExcessiveWork))"), // FileKey is not Debug
+        let big_m = (4 * 1024 * 1024).to_string();
+        for args in [
+            [SALT_OK, "1", big_m.as_str(), "4"],
+            [SALT_OK, "11", "8192", "1"],
+            [SALT_OK, "1", "8192", "9"],
+        ] {
+            assert!(
+                matches!(
+                    unwrap(&stanza(args, 32)),
+                    Some(Err(DecryptError::ExcessiveWork { .. }))
+                ),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_boundaries() {
+        // A real 2 GiB derivation is too expensive for a test, so check the bound directly.
+        assert!(check_bounds(Params {
+            t: 1,
+            m_kib: 2 * 1024 * 1024,
+            p: 1
+        })
+        .is_ok());
+        assert!(check_bounds(MAX).is_ok());
+        for bad in [
+            Params {
+                t: 1,
+                m_kib: 2 * 1024 * 1024 + 1,
+                p: 1,
+            },
+            Params {
+                t: MAX.t + 1,
+                m_kib: 8192,
+                p: 1,
+            },
+            Params {
+                t: 1,
+                m_kib: 8192,
+                p: MAX.p + 1,
+            },
+        ] {
+            assert!(matches!(
+                check_bounds(bad),
+                Err(DecryptError::ExcessiveWork { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_stanzas() {
+        let ok = [SALT_OK, "1", "8192", "1"];
+        let mut cases: Vec<(&str, Stanza)> = Vec::new();
+        let mut s3 = stanza(ok, 32);
+        s3.args.pop();
+        cases.push(("3 args", s3));
+        let mut s5 = stanza(ok, 32);
+        s5.args.push("1".into());
+        cases.push(("5 args", s5));
+        cases.push(("body 31", stanza(ok, 31)));
+        cases.push(("salt not base64", stanza(["!!!!", "1", "8192", "1"], 32)));
+        cases.push((
+            "salt 8 bytes",
+            stanza(["AAAAAAAAAAA", "1", "8192", "1"], 32),
+        ));
+        cases.push(("t=0", stanza([SALT_OK, "0", "8192", "1"], 32)));
+        cases.push(("m=0", stanza([SALT_OK, "1", "0", "1"], 32)));
+        cases.push(("p=0", stanza([SALT_OK, "1", "8192", "0"], 32)));
+        cases.push(("t=x", stanza([SALT_OK, "x", "8192", "1"], 32)));
+        cases.push(("m=5 p=1", stanza([SALT_OK, "1", "5", "1"], 32)));
+        cases.push(("m=63 p=8", stanza([SALT_OK, "1", "63", "8"], 32)));
+        for (name, st) in cases {
+            assert!(
+                matches!(unwrap(&st), Some(Err(DecryptError::InvalidHeader))),
+                "{name}"
+            );
         }
     }
 
@@ -252,10 +364,28 @@ mod tests {
         assert_eq!(out, b"argon");
 
         let x = age::x25519::Identity::generate();
+        let pass2 = pass.clone();
         let mixed: Vec<Box<dyn age::Recipient + Send>> = vec![
             Box::new(Recipient::with_params(pass, small())),
             Box::new(x.to_public()),
         ];
-        assert!(crate::crypt::encrypt_writer(Vec::new(), &mixed, false).is_err());
+        assert!(matches!(
+            crate::crypt::encrypt_writer(Vec::new(), &mixed, false).err(),
+            Some(Error::Encrypt(
+                age::EncryptError::IncompatibleRecipients { .. }
+            ))
+        ));
+
+        // Reversed order is rejected too.
+        let reversed: Vec<Box<dyn age::Recipient + Send>> = vec![
+            Box::new(x.to_public()),
+            Box::new(Recipient::with_params(pass2, small())),
+        ];
+        assert!(matches!(
+            crate::crypt::encrypt_writer(Vec::new(), &reversed, false).err(),
+            Some(Error::Encrypt(
+                age::EncryptError::IncompatibleRecipients { .. }
+            ))
+        ));
     }
 }
