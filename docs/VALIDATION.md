@@ -1,6 +1,6 @@
 # Validation evidence for sealdrop 0.2.0
 
-Toolchain gates, tests, CCTV, interop, the desktop build, the two regenerated screenshots and the real desktop runs were re-run on branch `main` at commit `10cf7bd` (the final-review fix wave; the docs-only commit that updates this file sits on top). The manual CLI timed-release session further down was recorded earlier, at `6913101`, and is kept as it was (Windows 11, `cargo` 1.96.0, Node 20.18.0, Go `age` v1.3.2, `tauri-cli` 2.11.2). Everything below comes from commands run for this document. The Code Reviewer and Reality Checker passes are separate and are not recorded here.
+Toolchain gates, tests, CCTV, interop, the desktop build, the two regenerated screenshots and the real desktop runs were re-run on branch `main` after the final-review fix wave: tests, clippy, fmt and `npm run build` at commit `c9891fa` (the two re-review residuals, N1 and N2); the installers, real desktop runs and screenshots at `10cf7bd` (N1/N2 change only the CLI, one Open-screen field and tests). The docs-only commit that updates this file sits on top. The manual CLI timed-release session further down was recorded earlier, at `6913101`, and is kept as it was (Windows 11, `cargo` 1.96.0, Node 20.18.0, Go `age` v1.3.2, `tauri-cli` 2.11.2). Everything below comes from commands run for this document. The Code Reviewer and Reality Checker passes are separate and are not recorded here.
 
 ## Summary
 
@@ -8,7 +8,7 @@ Toolchain gates, tests, CCTV, interop, the desktop build, the two regenerated sc
 |---|---|
 | `cargo fmt --all --check` | pass (no output, exit 0) |
 | `cargo clippy --workspace --all-targets -- -D warnings` | pass (`Finished`, no warnings) |
-| `cargo test --workspace` (`SEALDROP_REQUIRE_AGE=1`) | pass: 145 passed, 0 failed, 0 ignored |
+| `cargo test --workspace` (`SEALDROP_REQUIRE_AGE=1`) | pass: 149 passed, 0 failed, 0 ignored |
 | `cargo deny check licenses advisories` | `advisories ok, licenses ok` (one warning: unused license allowance) |
 | CCTV (`--test cctv`) | `total=147 passed=128 skipped=19 failed=0` |
 | Interop (`--test interop_age`) | 3 passed, 0 failed. Recipient-mode packages opened by stock age (2 tests run the Go CLI); scrypt-mode verified with the age crate only |
@@ -21,12 +21,12 @@ Toolchain gates, tests, CCTV, interop, the desktop build, the two regenerated sc
 
 ## Tests per crate
 
-From `cargo test --workspace 2>&1 | tee $TEMP/sealdrop-test.log`, with `SEALDROP_REQUIRE_AGE=1` and Go `age` on `PATH`. The log has no line containing "warning", and 145 lines matching `^test .* ok$`.
+From `cargo test --workspace 2>&1 | tee $TEMP/sealdrop-test.log`, with `SEALDROP_REQUIRE_AGE=1` and Go `age` on `PATH`. The log has no line containing "warning", and 149 lines matching `^test .* ok$`.
 
 | Crate | Test binary | Passed |
 |---|---|---|
-| sealdrop-cli | unit (`src/main.rs`) | 6 |
-| sealdrop-cli | `tests/cli.rs` | 13 |
+| sealdrop-cli | unit (`src/main.rs`) | 9 |
+| sealdrop-cli | `tests/cli.rs` | 14 |
 | sealdrop-core | unit (`src/lib.rs`) | 75 |
 | sealdrop-core | `tests/cctv.rs` | 1 (runs the 147 CCTV vectors, see below) |
 | sealdrop-core | `tests/interop_age.rs` | 3 |
@@ -38,13 +38,13 @@ From `cargo test --workspace 2>&1 | tee $TEMP/sealdrop-test.log`, with `SEALDROP
 | sealdrop-release | `tests/cli.rs` | 2 |
 | sealdrop-release | `tests/service.rs` | 12 |
 | Doc-tests | sealdrop_core, sealdrop_release | 0 |
-| **Total** | | **145** (6+13+75+1+3+15+1+1+16+2+12) |
+| **Total** | | **149** (9+14+75+1+3+15+1+1+16+2+12) |
 
 The `test result` lines from the log, in order (executable hash suffixes dropped, the crate added in parentheses; counts and timings are as printed):
 
 ```
-Running unittests src\main.rs (sealdrop-cli)        test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-Running tests\cli.rs (sealdrop-cli)                 test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.28s
+Running unittests src\main.rs (sealdrop-cli)        test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Running tests\cli.rs (sealdrop-cli)                 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.20s
 Running unittests src\lib.rs (sealdrop-core)        test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.56s
 Running tests\cctv.rs                               test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.64s
 Running tests\interop_age.rs                        test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.55s
@@ -186,6 +186,19 @@ taskkill /PID 21776 -> process gone
 ```
 
 ## CLI closed-pipe check
+
+`seal --passphrase` is the exception (since `c9891fa`): the passphrase lines are printed first, and if they cannot be written the bundle is removed and the exit code is 1:
+
+```
+$ sealdrop seal in --passphrase --kdf-profile test -o out 2>err.txt | true; echo ${PIPESTATUS[0]}
+1
+error: passphrase could not be shown; package removed
+files left in out: 0
+$ sealdrop seal in --passphrase --kdf-profile test -o out2 | head -1
+passphrase: finer doornail dodge stimulate sublevel shrewdly
+```
+
+The other commands:
 
 ```
 $ for i in $(seq 1 30); do ./target/debug/sealdrop recipient | true; ...; done
