@@ -68,7 +68,7 @@ fn keygen_recipient_seal_verify_open() {
         b"<p>x</p>"
     );
 
-    // Tamper -> verify exits 2, open refuses, open --skip-verify fails on MAC.
+    // Tamper -> verify exits 2, and open refuses (verification runs before any decryption).
     let mut bytes = std::fs::read(&pkg).unwrap();
     let i = bytes.len() - 3;
     bytes[i] ^= 0xff;
@@ -218,7 +218,8 @@ fn trust_store_and_unknown_signer() {
         .assert()
         .failure()
         .code(2)
-        .stderr(predicate::str::contains("trust add"));
+        .stderr(predicate::str::contains("trust add"))
+        .stderr(predicate::str::contains(&signer));
     cmd(&bob)
         .args(["trust", "add", "alice", &signer])
         .assert()
@@ -298,7 +299,12 @@ fn timed_release_end_to_end_against_real_service() {
         .env("SEALDROP_RELEASE_TOKEN", &token)
         .assert()
         .success()
-        .stdout(predicate::str::contains("Timed release: 10m"));
+        .stdout(predicate::str::contains(
+            "Timed release: 10m after first open, enforced by",
+        ))
+        .stdout(predicate::str::contains(
+            "This does not protect the contents once decrypted.",
+        ));
     let m = std::fs::read_to_string(outdir.join("report.manifest.json")).unwrap();
     assert!(m.contains("\"window_secs\": 600"));
     assert!(m.contains("\"service_key\": \"RW"));
@@ -310,7 +316,13 @@ fn timed_release_end_to_end_against_real_service() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Expiry applies to the encrypted package only",
+            "Expiry applies to the encrypted package only; nothing can recall a file after it has been decrypted.",
+        ))
+        .stdout(predicate::str::contains(format!(
+            "This package uses timed release: 10m after first open, enforced by {service}"
+        )))
+        .stdout(predicate::str::contains(
+            "Opening it starts or continues the window on the service's clock.",
         ));
     // Re-open inside the window is allowed.
     cmd(&home)
@@ -321,19 +333,100 @@ fn timed_release_end_to_end_against_real_service() {
         .assert()
         .success();
     // Sender fetches and verifies the pinned receipt.
-    cmd(&home)
+    let fetched = cmd(&home)
         .args(["receipt", "fetch"])
         .arg(outdir.join("report.manifest.json"))
         .env("SEALDROP_RELEASE_TOKEN", &token)
         .assert()
         .success()
         .stdout(predicate::str::contains("unlock count: 2"));
+    assert_no_token(fetched.get_output(), &token);
     assert!(outdir.join("report.receipt.json").exists());
-    cmd(&home)
+    let verified = cmd(&home)
         .args(["receipt", "verify"])
         .arg(outdir.join("report.receipt.json"))
         .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "OK (key not pinned): receipt signature valid",
+        ));
+    assert_no_token(verified.get_output(), &token);
+    // Pinning the key from the manifest drops the "not pinned" caveat.
+    let key = m
+        .split("\"service_key\": \"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .to_string();
+    cmd(&home)
+        .args(["receipt", "verify"])
+        .arg(outdir.join("report.receipt.json"))
+        .args(["--service-key", &key])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OK: receipt signature valid"));
+    // --skip-verify on a timed package never echoes the unverified header as fact.
+    cmd(&home)
+        .arg("open")
+        .arg(outdir.join("report.sealdrop.age"))
+        .args(["--skip-verify", "-o"])
+        .arg(d.path().join("r4"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "(unverified header; window unknown)",
+        ))
+        .stdout(predicate::str::contains(
+            "signature NOT verified (--skip-verify)",
+        ));
+    // `receipt fetch` refuses to send the token anywhere if the package no longer matches
+    // its signed manifest (tamper the package, not the signed manifest).
+    let outdir3 = d.path().join("b3");
+    cmd(&home)
+        .arg("seal")
+        .arg(fixture(d.path()))
+        .args([
+            "-r",
+            &rec,
+            "--expire-after",
+            "10m",
+            "--release-service",
+            &service,
+            "-o",
+        ])
+        .arg(&outdir3)
+        .env("SEALDROP_RELEASE_TOKEN", &token)
+        .assert()
         .success();
+    let pkg3 = outdir3.join("report.sealdrop.age");
+    let mut bytes = std::fs::read(&pkg3).unwrap();
+    let i = bytes.len() - 3;
+    bytes[i] ^= 0xff;
+    std::fs::write(&pkg3, bytes).unwrap();
+    let refused = cmd(&home)
+        .args(["receipt", "fetch"])
+        .arg(outdir3.join("report.manifest.json"))
+        .env("SEALDROP_RELEASE_TOKEN", &token)
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("does not match"));
+    assert_no_token(refused.get_output(), &token);
+    assert!(!outdir3.join("report.receipt.json").exists());
+    // A file that is not a `.manifest.json` is rejected with a clear message.
+    let not_manifest = d.path().join("notes.txt");
+    std::fs::write(&not_manifest, b"x").unwrap();
+    let bad = cmd(&home)
+        .args(["receipt", "fetch"])
+        .arg(&not_manifest)
+        .env("SEALDROP_RELEASE_TOKEN", &token)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("<name>.manifest.json"));
+    assert_no_token(bad.get_output(), &token);
     // A 1-second window expires: seal, open once, wait, open again -> exit 2.
     let outdir2 = d.path().join("b2");
     cmd(&home)
@@ -392,4 +485,174 @@ fn seal_dot_uses_the_real_folder_name() {
         .assert()
         .success();
     assert!(outdir.join("report.sealdrop.age").exists());
+}
+
+fn assert_no_token(out: &std::process::Output, token: &str) {
+    for stream in [&out.stdout, &out.stderr] {
+        assert!(
+            !String::from_utf8_lossy(stream).contains(token),
+            "the deposit token leaked into command output"
+        );
+    }
+}
+
+#[test]
+fn usage_errors_exit_1_and_help_exits_0() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    // Exit 2 means "verification failed", so a usage error must not use it.
+    cmd(&home)
+        .args(["seal", "--no-such-flag"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("--no-such-flag"));
+    cmd(&home).arg("no-such-command").assert().failure().code(1);
+    cmd(&home).assert().failure().code(1);
+    cmd(&home)
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: sealdrop"));
+    cmd(&home)
+        .args(["seal", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--passphrase"));
+    cmd(&home)
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sealdrop"));
+}
+
+#[test]
+fn passphrase_only_flags_need_passphrase() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let rec = String::from_utf8(cmd(&home).arg("recipient").output().unwrap().stdout)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    let input = fixture(d.path());
+    for (n, flags) in [
+        ("--argon2id", vec!["--argon2id"]),
+        ("--kdf-profile", vec!["--kdf-profile", "high"]),
+        ("--words", vec!["--words", "bip39"]),
+        ("--word-count", vec!["--word-count", "8"]),
+        ("--qr", vec!["--qr"]),
+    ] {
+        cmd(&home)
+            .arg("seal")
+            .arg(&input)
+            .args(["-r", &rec, "-o"])
+            .arg(d.path().join("never"))
+            .args(&flags)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains(format!(
+                "{n} requires --passphrase"
+            )));
+    }
+    assert!(!d.path().join("never").exists());
+}
+
+#[test]
+fn bad_windows_are_errors_not_panics() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let rec = String::from_utf8(cmd(&home).arg("recipient").output().unwrap().stdout)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    for w in ["10\u{e9}", "\u{e9}", "m", "0s", "10"] {
+        cmd(&home)
+            .arg("seal")
+            .arg(fixture(d.path()))
+            .args([
+                "-r",
+                &rec,
+                "--release-service",
+                "https://x.example",
+                "--expire-after",
+                w,
+                "-o",
+            ])
+            .arg(d.path().join("never"))
+            .env("SEALDROP_RELEASE_TOKEN", "t")
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("window"));
+    }
+}
+
+#[test]
+fn empty_passphrase_stdin_is_an_error() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let out = cmd(&home)
+        .arg("seal")
+        .arg(fixture(d.path()))
+        .args(["--passphrase", "--kdf-profile", "test", "-o"])
+        .arg(d.path().join("b"))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let pkg = d.path().join("b/report.sealdrop.age");
+    for input in ["", "\n"] {
+        cmd(&home)
+            .arg("open")
+            .arg(&pkg)
+            .arg("-o")
+            .arg(d.path().join("r"))
+            .arg("--passphrase-stdin")
+            .write_stdin(input)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("no passphrase on stdin"));
+    }
+}
+
+#[test]
+fn skip_verify_says_so() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let rec = String::from_utf8(cmd(&home).arg("recipient").output().unwrap().stdout)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    let outdir = d.path().join("b");
+    cmd(&home)
+        .arg("seal")
+        .arg(fixture(d.path()))
+        .args(["-r", &rec, "-o"])
+        .arg(&outdir)
+        .assert()
+        .success();
+    cmd(&home)
+        .arg("open")
+        .arg(outdir.join("report.sealdrop.age"))
+        .args(["--skip-verify", "-o"])
+        .arg(d.path().join("r"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "signature NOT verified (--skip-verify)",
+        ));
 }

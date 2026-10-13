@@ -103,7 +103,19 @@ fn message_for(e: &anyhow::Error) -> String {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // clap exits 2 on usage errors by default, but 2 means "verification failed" here.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            let _ = e.print();
+            return match e.kind() {
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                    ExitCode::SUCCESS
+                }
+                _ => ExitCode::from(1),
+            };
+        }
+    };
     let r = match cli.cmd {
         Cmd::Keygen { force } => commands::keygen::run(force),
         Cmd::Recipient => commands::recipient::run(),

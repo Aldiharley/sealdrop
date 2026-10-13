@@ -37,18 +37,18 @@ pub struct Args {
     /// Generate a passphrase instead of using recipients (it is printed once, to stdout)
     #[arg(long)]
     pub passphrase: bool,
-    /// Word list for --passphrase
-    #[arg(long, value_enum, default_value = "eff")]
-    pub words: Words,
-    /// Passphrase length in words (0 = the minimum for the list: 6 EFF / 10 BIP-39)
-    #[arg(long, default_value_t = 0)]
-    pub word_count: usize,
+    /// Word list for --passphrase (default: eff)
+    #[arg(long, value_enum)]
+    pub words: Option<Words>,
+    /// Passphrase length in words (default and minimum: 6 for EFF, 10 for BIP-39)
+    #[arg(long)]
+    pub word_count: Option<usize>,
     /// Use the non-standard Argon2id stanza (files will not open in stock age)
     #[arg(long)]
     pub argon2id: bool,
-    /// Key-derivation strength for --passphrase
-    #[arg(long, value_enum, default_value = "default")]
-    pub kdf_profile: KdfProfile,
+    /// Key-derivation strength for --passphrase (default: default)
+    #[arg(long, value_enum)]
+    pub kdf_profile: Option<KdfProfile>,
     /// Write ASCII-armored output instead of binary
     #[arg(long)]
     pub armor: bool,
@@ -83,6 +83,18 @@ pub fn run(a: Args) -> anyhow::Result<()> {
     let ks = crate::store();
     let settings = ks.settings()?;
 
+    if !a.passphrase {
+        for (given, flag) in [
+            (a.argon2id, "--argon2id"),
+            (a.kdf_profile.is_some(), "--kdf-profile"),
+            (a.words.is_some(), "--words"),
+            (a.word_count.is_some(), "--word-count"),
+            (a.qr, "--qr"),
+        ] {
+            anyhow::ensure!(!given, "{flag} requires --passphrase");
+        }
+    }
+
     let mut recipients = Vec::new();
     for r in &a.recipients {
         recipients.push(Recipient::parse(r)?);
@@ -97,29 +109,30 @@ pub fn run(a: Args) -> anyhow::Result<()> {
             .context("give at least one -r <recipient>, or use --passphrase"));
     }
 
+    let kdf_profile = a.kdf_profile.unwrap_or(KdfProfile::Default);
     let use_argon2id = a.argon2id || settings.argon2id;
     let mode = if a.passphrase {
         let kdf = if use_argon2id {
-            Kdf::Argon2id(match a.kdf_profile {
+            Kdf::Argon2id(match kdf_profile {
                 KdfProfile::High => Profile::Desktop,
                 _ => Profile::Compat,
             })
         } else {
             Kdf::Scrypt {
-                log_n: match a.kdf_profile {
+                log_n: match kdf_profile {
                     KdfProfile::Default => settings.scrypt_log_n,
                     KdfProfile::High => SCRYPT_HIGH_LOG_N,
                     KdfProfile::Test => 10,
                 },
             }
         };
-        let list = match a.words {
+        let list = match a.words.unwrap_or(Words::Eff) {
             Words::Eff => WordList::Eff,
             Words::Bip39 => WordList::Bip39,
         };
         Mode::Passphrase {
             list,
-            words: a.word_count,
+            words: a.word_count.unwrap_or(0),
             kdf,
         }
     } else {

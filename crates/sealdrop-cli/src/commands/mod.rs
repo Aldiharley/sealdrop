@@ -29,17 +29,16 @@ impl Progress for StderrProgress {
 /// Parses `90s`, `10m`, `6h`, `3d` into seconds.
 pub fn parse_window(s: &str) -> anyhow::Result<u64> {
     let s = s.trim();
-    let (num, unit) = s.split_at(s.len().saturating_sub(1));
-    let n: u64 = num
-        .parse()
-        .map_err(|_| anyhow::anyhow!("invalid window `{s}`; use e.g. 90s, 10m, 6h, 3d"))?;
-    let mult = match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3600,
-        "d" => 86_400,
-        _ => anyhow::bail!("invalid window unit in `{s}`; use s, m, h or d"),
+    let bad = || {
+        anyhow::anyhow!(
+            "invalid window `{s}`; use a whole number and s, m, h or d, e.g. 90s, 10m, 6h, 3d"
+        )
     };
+    let (num, mult) = [("s", 1u64), ("m", 60), ("h", 3600), ("d", 86_400)]
+        .iter()
+        .find_map(|(suffix, mult)| s.strip_suffix(suffix).map(|n| (n, *mult)))
+        .ok_or_else(bad)?;
+    let n: u64 = num.parse().map_err(|_| bad())?;
     let secs = n
         .checked_mul(mult)
         .ok_or_else(|| anyhow::anyhow!("window too large"))?;
@@ -77,6 +76,20 @@ mod tests {
         assert_eq!(super::parse_window("3d").unwrap(), 259_200);
         assert!(super::parse_window("10").is_err());
         assert!(super::parse_window("0m").is_err());
+        // Non-ASCII input must be an error, never a panic.
+        for bad in [
+            "",
+            "m",
+            "10é",
+            "é",
+            "１０m",
+            "10\u{1F600}",
+            "-5m",
+            "1.5h",
+            "99999999999999999999d",
+        ] {
+            assert!(super::parse_window(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

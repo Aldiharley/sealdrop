@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use age::secrecy::SecretString;
 use clap::Args as ClapArgs;
 use sealdrop_core::open::{open, OpenRequest};
-use sealdrop_core::release::HttpFetch;
+use sealdrop_core::release::{self, HttpFetch};
+use sealdrop_core::Error;
 use zeroize::Zeroizing;
 
 #[derive(ClapArgs)]
@@ -32,11 +33,40 @@ pub struct Args {
 pub fn run(a: Args) -> anyhow::Result<()> {
     let ks = crate::store();
     let p = sealdrop_core::probe::probe(&a.package)?;
-    if let Some(r) = &p.release {
-        println!(
-            "This package uses timed release via {} (release {}).",
-            r.service, r.release_id
-        );
+    if let Some(h) = &p.release {
+        if a.skip_verify {
+            // Nothing in the header is signed, so never echo it raw: print only values that
+            // pass the same validation the network code applies.
+            let service = release::validate_service_url(&h.service)
+                .unwrap_or_else(|_| "<invalid service URL>".into());
+            let id = match release::validate_release_id(&h.release_id) {
+                Ok(()) => format!(" (release {})", h.release_id),
+                Err(_) => String::new(),
+            };
+            println!(
+                "This package claims timed release via {service}{id} (unverified header; window unknown)."
+            );
+        } else {
+            // Verify first (the manifest is signed, the header is not) so the window and
+            // service shown are the sender's. `open` verifies again below: the file is hashed twice.
+            let v = sealdrop_core::open::verify(&ks, &a.package, a.signer.as_deref())?;
+            let r = v.manifest.release.as_ref().ok_or_else(|| {
+                Error::Verify(
+                    "the package asks for timed release but the signed manifest does not".into(),
+                )
+            })?;
+            if r.service != h.service || r.release_id != h.release_id {
+                return Err(Error::Verify(
+                    "the package's timed-release service does not match the signed manifest".into(),
+                )
+                .into());
+            }
+            println!(
+                "This package uses timed release: {} after first open, enforced by {}",
+                super::human(r.window_secs),
+                r.service
+            );
+        }
         println!("Opening it starts or continues the window on the service's clock.");
     }
     let passphrase = if a.passphrase_stdin {
@@ -67,15 +97,16 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         rep.extract.files,
         rep.extract.bytes
     );
-    if let Some(v) = &rep.verify {
-        println!(
+    match &rep.verify {
+        Some(v) => println!(
             "verified: signer {}{}",
             v.signer,
             v.trusted_as
                 .as_ref()
                 .map(|n| format!(" ({n})"))
                 .unwrap_or_default()
-        );
+        ),
+        None => println!("signature NOT verified (--skip-verify)"),
     }
     if let Some(u) = &rep.release {
         println!(
@@ -91,7 +122,7 @@ pub fn run(a: Args) -> anyhow::Result<()> {
 fn read_line_secret() -> anyhow::Result<SecretString> {
     let mut line = Zeroizing::new(String::new());
     std::io::stdin().lock().read_line(&mut line)?;
-    Ok(SecretString::from(
-        line.trim_end_matches(['\r', '\n']).to_string(),
-    ))
+    let pass = line.trim_end_matches(['\r', '\n']);
+    anyhow::ensure!(!pass.is_empty(), "no passphrase on stdin");
+    Ok(SecretString::from(pass.to_string()))
 }

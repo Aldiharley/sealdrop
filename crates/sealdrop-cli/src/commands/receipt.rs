@@ -63,7 +63,11 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
         } => {
             let signed: SignedReceipt = serde_json::from_slice(&std::fs::read(receipt)?)?;
             let r = verify_receipt(&signed, service_key.as_deref())?;
-            println!("OK: receipt signature valid");
+            if service_key.is_some() {
+                println!("OK: receipt signature valid");
+            } else {
+                println!("OK (key not pinned): receipt signature valid");
+            }
             print(&r);
             if service_key.is_none() {
                 println!(
