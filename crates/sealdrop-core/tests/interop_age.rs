@@ -7,7 +7,17 @@ use sealdrop_core::passphrase::WordList;
 use sealdrop_core::progress::NoProgress;
 use sealdrop_core::seal::{seal, Kdf, Mode, SealRequest};
 
+/// Returns false (after logging) when `age` is missing, unless `SEALDROP_REQUIRE_AGE=1`, in
+/// which case a missing binary is a hard failure (CI sets it so interop can never silently skip).
 fn age_available() -> bool {
+    let ok = age_on_path();
+    if !ok && std::env::var("SEALDROP_REQUIRE_AGE").as_deref() == Ok("1") {
+        panic!("SEALDROP_REQUIRE_AGE=1 but the reference `age` binary is not on PATH");
+    }
+    ok
+}
+
+fn age_on_path() -> bool {
     Command::new("age")
         .arg("--version")
         .output()
@@ -74,6 +84,16 @@ fn stock_age_decrypts_recipient_mode_and_tar_extracts() {
         .collect();
     assert_eq!(names[0], "sealdrop/meta.json");
     assert!(names.iter().any(|n| n == "sealdrop/payload/docs/hello.txt"));
+
+    // The stock-age output is a real tar: unpack it and check the payload bytes.
+    let dest = tempfile::tempdir().unwrap();
+    tar::Archive::new(&out.stdout[..])
+        .unpack(dest.path())
+        .unwrap();
+    assert_eq!(
+        std::fs::read(dest.path().join("sealdrop/payload/docs/hello.txt")).unwrap(),
+        b"interop"
+    );
 }
 
 #[test]

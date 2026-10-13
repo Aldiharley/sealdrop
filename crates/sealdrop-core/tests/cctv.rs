@@ -87,6 +87,14 @@ fn all_cctv_vectors() {
             }
         }
         if unsupported {
+            // Only hybrid vectors may be skipped; anything else is a parse bug in this test.
+            assert!(
+                v.name.starts_with("hybrid")
+                    || v.name.starts_with("armor_hybrid")
+                    || v.identities.iter().any(|i| i.contains("AGE-SECRET-KEY-PQ")),
+                "{}: skipped but not a hybrid vector",
+                v.name
+            );
             skipped.push(format!(
                 "{} (expect={}): identity type not supported by age 0.12.1: {}",
                 v.name, v.expect, v.comment
@@ -165,5 +173,10 @@ fn all_cctv_vectors() {
         failures.is_empty(),
         "CCTV failures:\n{}",
         failures.join("\n")
+    );
+    assert_eq!(
+        passed + skipped.len(),
+        names.len(),
+        "every vector must be either passed or skipped"
     );
 }

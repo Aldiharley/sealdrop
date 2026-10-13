@@ -193,6 +193,7 @@ pub fn encrypt_writer<W: Write>(
     })
 }
 
+// Lenient only in the safe direction: a binary age file never starts with whitespace.
 /// Drops leading ASCII whitespace (space, tab, CR, LF) from the stream, once, and then
 /// passes everything through unchanged. The age crate only detects armor at the very start
 /// of its input, but the armor spec allows whitespace around armored files. A binary age
