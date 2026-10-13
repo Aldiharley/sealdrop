@@ -111,15 +111,8 @@ fn all_cctv_vectors() {
         })();
         let got = hex::encode(hasher.finalize());
         let ok = match v.expect.as_str() {
-            // Per-vector tolerances, all documented by the age crate's own testkit
+            // Per-vector tolerances, documented by the age crate's own testkit
             // (age-0.12.1/tests/testkit.rs). Each is pinned to its exact observed behaviour.
-            //
-            // "whitespace is allowed before and after armored files": the age crate only
-            // detects armor at the very start of the stream, so leading whitespace makes
-            // the file look binary and the header is rejected.
-            "success" if v.name == "armor_whitespace_outside" => {
-                matches!(&result, Err(e) if e.starts_with("setup:"))
-            }
             "success" => result.is_ok() && Some(&got) == v.payload.as_ref(),
             // The age crate keeps parsing legacy stanzas that lack the explicit short
             // final body line, so these two decrypt instead of failing the header parse.

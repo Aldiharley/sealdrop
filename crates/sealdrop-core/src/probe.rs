@@ -37,6 +37,8 @@ pub fn probe(path: &Path) -> Result<Probe> {
 }
 
 pub fn probe_bytes(buf: &[u8]) -> Result<Probe> {
+    // The armor spec allows whitespace before the BEGIN line; `decrypt_reader` skips it too.
+    let buf = buf.trim_ascii_start();
     let armored = buf.starts_with(b"-----BEGIN AGE ENCRYPTED FILE-----");
     let text: Vec<u8> = if armored {
         // Work on bytes: the input is untrusted and may be cut off at any point.
@@ -138,6 +140,20 @@ mod tests {
             assert!(p.needs_passphrase);
             assert!(p.release.is_none());
         }
+    }
+
+    #[test]
+    fn leading_whitespace_before_armor_is_tolerated() {
+        let pass = age::secrecy::SecretString::from("p".to_string());
+        let r: Vec<Box<dyn age::Recipient + Send>> =
+            vec![Box::new(crate::crypt::scrypt_recipient(pass, 10).unwrap())];
+        let mut w = crate::crypt::encrypt_writer(Vec::new(), &r, true).unwrap();
+        w.write_all(b"x").unwrap();
+        let mut ct = b"  \n\t".to_vec();
+        ct.extend(w.finish().unwrap());
+        let p = probe_bytes(&ct).unwrap();
+        assert!(p.armored);
+        assert_eq!(p.tags, vec!["scrypt"]);
     }
 
     #[test]

@@ -193,10 +193,45 @@ pub fn encrypt_writer<W: Write>(
     })
 }
 
+/// Drops leading ASCII whitespace (space, tab, CR, LF) from the stream, once, and then
+/// passes everything through unchanged. The age crate only detects armor at the very start
+/// of its input, but the armor spec allows whitespace around armored files. A binary age
+/// file starts with `age-encryption.org/v1`, so skipping whitespace cannot alter one.
+struct SkipLeadingWhitespace<R: Read> {
+    inner: R,
+    started: bool,
+}
+
+impl<R: Read> Read for SkipLeadingWhitespace<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.started || buf.is_empty() {
+            return self.inner.read(buf);
+        }
+        loop {
+            let n = self.inner.read(buf)?;
+            if n == 0 {
+                return Ok(0);
+            }
+            if let Some(i) = buf[..n]
+                .iter()
+                .position(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                buf.copy_within(i..n, 0);
+                self.started = true;
+                return Ok(n - i);
+            }
+        }
+    }
+}
+
 pub fn decrypt_reader<'a, R: Read>(
     input: R,
     identities: &[Box<dyn age::Identity + 'a>],
 ) -> Result<impl Read> {
+    let input = SkipLeadingWhitespace {
+        inner: input,
+        started: false,
+    };
     let armored = ArmoredReader::new(BufReader::new(input));
     let dec = age::Decryptor::new(armored)?;
     let reader = dec.decrypt(identities.iter().map(|i| i.as_ref() as &dyn age::Identity))?;
@@ -258,6 +293,24 @@ mod tests {
             r.read_to_end(&mut pt).unwrap();
             assert_eq!(pt, b"hello sealdrop");
         }
+    }
+
+    #[test]
+    fn decrypts_armor_with_leading_whitespace() {
+        let pass = SecretString::from("p".to_string());
+        let r: Vec<Box<dyn age::Recipient + Send>> =
+            vec![Box::new(scrypt_recipient(pass.clone(), 10).unwrap())];
+        let mut w = encrypt_writer(Vec::new(), &r, true).unwrap();
+        w.write_all(b"ws").unwrap();
+        let mut ct = b"  \n\t".to_vec();
+        ct.extend(w.finish().unwrap());
+        let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(scrypt_identity(pass))];
+        let mut out = Vec::new();
+        decrypt_reader(&ct[..], &ids)
+            .unwrap()
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, b"ws");
     }
 
     #[test]
