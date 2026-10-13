@@ -16,6 +16,7 @@ pub mod probe;
 pub mod progress;
 pub mod release;
 pub mod seal;
+pub mod text;
 
 pub use error::{Error, Result};
 

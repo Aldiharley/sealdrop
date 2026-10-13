@@ -5,6 +5,8 @@ use sealdrop_core::release::{
     fetch_receipt, verify_receipt, verify_receipt_for, Receipt, SignedReceipt,
 };
 
+use super::sanitize;
+
 #[derive(Subcommand)]
 pub enum Cmd {
     /// Fetch, verify and save the receipt for a sealed package (sender side)
@@ -80,16 +82,18 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
 }
 
 fn print(r: &Receipt) -> anyhow::Result<()> {
-    out!("release: {}", r.release_id);
-    out!("package sha256: {}", r.package_sha256);
+    // Receipt fields come from the service (or, under `receipt verify`, from a file).
+    out!("release: {}", sanitize(&r.release_id));
+    out!("package sha256: {}", sanitize(&r.package_sha256));
     match &r.first_unlock {
         Some(t) => out!(
-            "first opened: {t} (service clock), expires {}",
-            r.expires_at.as_deref().unwrap_or("?")
+            "first opened: {} (service clock), expires {}",
+            sanitize(t),
+            sanitize(r.expires_at.as_deref().unwrap_or("?"))
         ),
         None => out!("not yet opened"),
     }
     out!("unlock count: {}", r.unlock_count);
-    out!("service key: {}", r.service_key);
+    out!("service key: {}", super::key_display(&r.service_key));
     Ok(())
 }

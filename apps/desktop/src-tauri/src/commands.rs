@@ -17,6 +17,7 @@ use std::sync::Mutex;
 use age::secrecy::SecretString;
 use sealdrop_core::keys::{KeyStore, Settings};
 use sealdrop_core::progress::{Progress, ProgressEvent};
+use sealdrop_core::text::sanitize;
 use sealdrop_core::Error;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -199,7 +200,7 @@ fn progress_parts(e: ProgressEvent) -> (&'static str, String) {
     match e {
         ProgressEvent::Packing { path } => ("packing", path),
         ProgressEvent::Encrypted { bytes } => ("encrypted", bytes.to_string()),
-        ProgressEvent::Contacting { service } => ("contacting", service),
+        ProgressEvent::Contacting { service } => ("contacting", sanitize(&service)),
         ProgressEvent::Verifying => ("verifying", String::new()),
         ProgressEvent::Extracting { path } => ("extracting", path),
         ProgressEvent::Done => ("done", String::new()),
@@ -342,6 +343,15 @@ pub struct ReleaseOut {
     pub window_secs: u64,
 }
 
+/// The service URL is the sender's text: React renders it as text, and it is sanitized here
+/// too (same rule as the CLI) so no control or bidi character reaches the UI.
+fn release_out(r: sealdrop_core::manifest::ReleaseInfo) -> ReleaseOut {
+    ReleaseOut {
+        service: sanitize(&r.service),
+        window_secs: r.window_secs,
+    }
+}
+
 /// Holds the generated passphrase in passphrase mode, so it has no `Debug`.
 #[derive(Serialize)]
 pub struct SealOut {
@@ -458,10 +468,7 @@ fn seal_impl(ks: &KeyStore, req: SealArgs, progress: &dyn Progress) -> CmdResult
         bytes: res.pack.total_bytes,
         passphrase: res.passphrase.as_ref().map(|p| p.joined().to_string()),
         entropy_bits: res.passphrase.as_ref().map(|p| p.entropy_bits),
-        release: res.manifest_doc.release.map(|r| ReleaseOut {
-            service: r.service,
-            window_secs: r.window_secs,
-        }),
+        release: res.manifest_doc.release.map(release_out),
     })
 }
 
@@ -503,8 +510,8 @@ fn probe_impl(path: &Path) -> CmdResult<ProbeOut> {
         inner_kind,
         // The header is not signed: the service shown here is a claim until `verify`.
         timed_release: p.release.map(|r| ProbeRelease {
-            service: r.service,
-            release_id: r.release_id,
+            service: sanitize(&r.service),
+            release_id: sanitize(&r.release_id),
         }),
     })
 }
@@ -561,10 +568,7 @@ fn verify_impl(ks: &KeyStore, path: &Path, signer: Option<&str>) -> CmdResult<Ve
                         })
                         .collect(),
                 ),
-                release: m.release.map(|r| ReleaseOut {
-                    service: r.service,
-                    window_secs: r.window_secs,
-                }),
+                release: m.release.map(release_out),
                 ciphertext_sha256: Some(m.ciphertext.sha256),
             })
         }
@@ -1029,6 +1033,21 @@ mod tests {
             ]
         );
         assert_eq!(kinds[1].1, "7");
+        assert_eq!(
+            progress_parts(ProgressEvent::Contacting {
+                service: "https://r\u{1b}[2J.example".into()
+            })
+            .1,
+            "https://r?[2J.example"
+        );
+        // Manifest service URLs reach the WebView sanitized too.
+        let r = release_out(sealdrop_core::manifest::ReleaseInfo {
+            service: "https://r.example\u{202E}lmth.exe\u{7}".into(),
+            release_id: "id".into(),
+            window_secs: 60,
+            service_key: String::new(),
+        });
+        assert_eq!(r.service, "https://r.example?lmth.exe?");
     }
 
     #[test]

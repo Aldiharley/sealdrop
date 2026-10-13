@@ -7,6 +7,15 @@ pub mod trust;
 pub mod verify;
 
 use sealdrop_core::progress::{Progress, ProgressEvent};
+pub use sealdrop_core::text::sanitize;
+
+/// A signer or service key for display: its re-encoded form if it parses as a minisign
+/// public key, otherwise a placeholder. Never the raw (possibly hostile) string.
+pub fn key_display(s: &str) -> String {
+    minisign::PublicKey::from_base64(s)
+        .map(|pk| pk.to_base64())
+        .unwrap_or_else(|_| "<invalid signer key>".into())
+}
 
 /// Progress goes to stderr so stdout stays clean for the values scripts parse.
 pub struct StderrProgress;
@@ -17,7 +26,7 @@ impl Progress for StderrProgress {
             ProgressEvent::Packing { path } => eprintln!("packing {path}"),
             ProgressEvent::Encrypted { bytes } => eprintln!("encrypted {bytes} bytes"),
             ProgressEvent::Contacting { service } => {
-                eprintln!("contacting release service {service}")
+                eprintln!("contacting release service {}", sanitize(&service))
             }
             ProgressEvent::Verifying => eprintln!("verifying manifest"),
             ProgressEvent::Extracting { path } => eprintln!("extracting to {path}"),
@@ -90,6 +99,17 @@ mod tests {
         ] {
             assert!(super::parse_window(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn keys_are_shown_only_when_they_parse() {
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let k = kp.pk.to_base64();
+        assert_eq!(super::key_display(&k), k);
+        assert_eq!(
+            super::key_display("RW\u{1b}[2J; rm -rf ~"),
+            "<invalid signer key>"
+        );
     }
 
     #[test]

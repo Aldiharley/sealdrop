@@ -8,6 +8,8 @@ use sealdrop_core::release::{self, HttpFetch};
 use sealdrop_core::Error;
 use zeroize::Zeroizing;
 
+use super::{key_display, sanitize};
+
 #[derive(ClapArgs)]
 pub struct Args {
     /// The .sealdrop.age package (its .manifest.json and .minisig must sit beside it)
@@ -70,7 +72,7 @@ pub fn run(a: Args) -> anyhow::Result<()> {
             out!(
                 "This package uses timed release: {} after first open, enforced by {}",
                 super::human(r.window_secs),
-                r.service
+                sanitize(&r.service)
             );
         }
         out!("Opening it starts or continues the window on the service's clock.");
@@ -103,17 +105,17 @@ pub fn run(a: Args) -> anyhow::Result<()> {
     )?;
     out!(
         "restored: {} ({} files, {} bytes)",
-        rep.extract.root.display(),
+        sanitize(&rep.extract.root.display().to_string()),
         rep.extract.files,
         rep.extract.bytes
     );
     match &rep.verify {
         Some(v) => out!(
             "verified: signer {}{}",
-            v.signer,
+            key_display(&v.signer),
             v.trusted_as
                 .as_ref()
-                .map(|n| format!(" ({n})"))
+                .map(|n| format!(" ({})", sanitize(n)))
                 .unwrap_or_default()
         ),
         None => out!("signature NOT verified (--skip-verify)"),
@@ -121,8 +123,8 @@ pub fn run(a: Args) -> anyhow::Result<()> {
     if let Some(u) = &rep.release {
         out!(
             "first opened {} - expires {} (service clock)",
-            u.first_unlock,
-            u.expires_at
+            sanitize(&u.first_unlock),
+            sanitize(&u.expires_at)
         );
         out!("Expiry applies to the encrypted package only; nothing can recall a file after it has been decrypted.");
     }

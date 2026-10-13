@@ -173,7 +173,8 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) if is_quiet_exit(&e) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {}", message_for(&e));
+            // Error text can quote file-controlled values; never let them drive the terminal.
+            eprintln!("error: {}", commands::sanitize(&message_for(&e)));
             ExitCode::from(exit_code_for(&e))
         }
     }

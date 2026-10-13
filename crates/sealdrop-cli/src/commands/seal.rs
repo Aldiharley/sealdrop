@@ -191,7 +191,7 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         out!(
             "Timed release: {} after first open, enforced by {}",
             super::human(r.window_secs),
-            r.service
+            super::sanitize(&r.service)
         );
         out!("This does not protect the contents once decrypted.");
     }

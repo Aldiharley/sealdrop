@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::Args as ClapArgs;
 
+use super::{key_display, sanitize};
+
 #[derive(ClapArgs)]
 pub struct Args {
     /// The .sealdrop.age package (its .manifest.json and .minisig must sit beside it)
@@ -14,29 +16,38 @@ pub struct Args {
 pub fn run(a: Args) -> anyhow::Result<()> {
     let ks = crate::store();
     let v = sealdrop_core::open::verify(&ks, &a.package, a.signer.as_deref())?;
+    // Every manifest value is the sender's text: shown only through `sanitize`.
+    let m = &v.manifest;
     out!("OK: signature valid, ciphertext hash matches");
-    out!("package id: {}", v.manifest.package_id);
+    out!("package id: {}", sanitize(&m.package_id));
     out!(
         "signer: {}{}",
-        v.signer,
-        v.trusted_as.map(|n| format!(" ({n})")).unwrap_or_default()
+        key_display(&v.signer),
+        v.trusted_as
+            .as_ref()
+            .map(|n| format!(" ({})", sanitize(n)))
+            .unwrap_or_default()
     );
-    out!("created: {}", v.manifest.created);
-    if let Some(c) = &v.manifest.classification {
-        out!("classification: {c}");
+    out!("created: {}", sanitize(&m.created));
+    if let Some(c) = &m.classification {
+        out!("classification: {}", sanitize(c));
     }
-    if let Some(e) = &v.manifest.expires {
-        out!("advisory expiry: {e} (not enforced)");
+    if let Some(e) = &m.expires {
+        out!("advisory expiry: {} (not enforced)", sanitize(e));
     }
-    if let Some(r) = &v.manifest.release {
+    if let Some(r) = &m.release {
         out!(
             "timed release: {} after first open via {}",
             super::human(r.window_secs),
-            r.service
+            sanitize(&r.service)
         );
     }
-    for r in &v.manifest.recipients {
-        out!("recipient: {} {}", r.kind, r.fingerprint);
+    for r in &m.recipients {
+        out!(
+            "recipient: {} {}",
+            sanitize(&r.kind),
+            sanitize(&r.fingerprint)
+        );
     }
     Ok(())
 }
