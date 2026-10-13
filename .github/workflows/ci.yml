@@ -15,11 +15,13 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: "1.23" }
       - name: Install reference age for interop tests
-        run: go install filippo.io/age/cmd/age@latest
+        shell: bash
+        run: |
+          go install filippo.io/age/cmd/age@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --exclude sealdrop-desktop -- -D warnings
       - run: cargo test --workspace --exclude sealdrop-desktop
-        env: { PATH: "${{ env.PATH }}:${{ env.HOME }}/go/bin" }
   deny:
     runs-on: ubuntu-latest
     steps:
@@ -30,12 +32,20 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # Guard each step on the checked-out tree: a job-level `if` is evaluated before
+      # checkout, when hashFiles() cannot see the repo, so it would skip the job forever.
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
       - uses: Swatinem/rust-cache@v2
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
       - uses: actions/setup-node@v4
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
         with: { node-version: 20 }
       - run: npm ci
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
         working-directory: apps/desktop
       - run: npm run build
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
         working-directory: apps/desktop
       - run: cargo build -p sealdrop-desktop --release
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}

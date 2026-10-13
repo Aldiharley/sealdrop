@@ -10,8 +10,6 @@ node_modules/
 
 # keys, identities, packages — never commit (test fixtures live under testkit/ and tests/fixtures/)
 *.age
-!testkit/**
-!crates/**/tests/fixtures/**
 *.minisig
 *.sealdrop.age
 *.manifest.json
@@ -27,6 +25,9 @@ releases.db
 releases.db-*
 service.key
 service.pub
+# fixture exemptions go last: a later pattern would otherwise re-ignore them
+!testkit/**
+!crates/**/tests/fixtures/**
 
 # env and secrets
 .env
