@@ -317,15 +317,15 @@ mod tests {
     #[test]
     fn plugin_recipient_with_absent_binary_is_a_clean_error() {
         let s = bech32::encode::<bech32::Bech32>(
-            bech32::Hrp::parse("age1yubikey").unwrap(),
+            bech32::Hrp::parse("age1sealdroptest").unwrap(),
             &[2u8; 32],
         )
         .unwrap();
         let specs = vec![Recipient::parse(&s).unwrap()];
-        assert_eq!(specs[0].kind(), "plugin:yubikey");
-        assert_eq!(specs[0].plugin_name().as_deref(), Some("yubikey"));
+        assert_eq!(specs[0].kind(), "plugin:sealdroptest");
+        assert_eq!(specs[0].plugin_name().as_deref(), Some("sealdroptest"));
         match to_age_recipients(&specs) {
-            Err(Error::Other(m)) => assert!(m.contains("age-plugin-yubikey"), "{m}"),
+            Err(Error::Other(m)) => assert!(m.contains("age-plugin-sealdroptest"), "{m}"),
             other => panic!("expected Error::Other, got ok={}", other.is_ok()),
         }
     }
