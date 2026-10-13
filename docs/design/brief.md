@@ -371,7 +371,7 @@ Header: title "Seal"; subtitle "Lock a file or folder, sign it, and get a delive
 | Hardware-only notice (`notice`, warning glyph) | Hardware keys can't be backed up. If the key is lost or broken, this package can never be opened. |
 | Hardware-only toggle | I accept this package may become unrecoverable |
 | Hardware-only helper | Or add a second recipient that you can recover. |
-| Hardware-only rule (not copy) | The notice shows when every added recipient has `kind` starting with `plugin:` and "Also encrypt to me" is off (your own key counts as the recovery recipient). In timed release that toggle is unavailable, so a hardware-only set always needs the tick or a second non-plugin recipient. Until one of those holds, Seal is `aria-disabled` with the reason "Accept the unrecoverable-package warning or add a second recipient." The tick maps to `allow_unrecoverable`. |
+| Hardware-only rule (not copy) | The notice shows when every added recipient has `kind` starting with `plugin:` and "Also encrypt to me" is off. With "Also encrypt to me" on, your own key is the recovery recipient. In timed release that toggle is unavailable, so a hardware-only set always needs the tick or a second non-plugin recipient. Until one of those holds, Seal is `aria-disabled` with the reason "Accept the unrecoverable-package warning or add a second recipient." The tick maps to `allow_unrecoverable`. |
 | Error: not a recipient (`parse_recipient` fails) | Not a recipient string |
 | Error: plugin not allowed (`allowed=false`) | Plugin [name] is not on the allow-list |
 | Error: duplicate | That recipient is already in the list. |
@@ -449,7 +449,11 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 |---|---|
 | Headline (`.lead`, ok glyph) | Sealed. |
 | Sub line | [n] files written to [folder]. |
-| File rows | `[name].sealdrop.age` · size; `[name].manifest.json` · size; `[name].manifest.json.minisig` · size |
+| Package row | Package · [file name] · Copy (copies the full path) |
+| Other file rows | Manifest · [file name]; Signature · [file name] |
+| Package id row | Package id · [uuid] |
+| SHA-256 row | SHA-256 · first 8 and last 4 hex characters · Copy (copies the full hash) |
+| Size row | Size · [size], [n] files |
 | Note | The package, manifest and signature must stay together. |
 | Buttons | Copy folder path / Seal another |
 | Tile "Sending it", recipients | 1. Send all three files to your recipients. 2. They open the package in sealdrop (Open). Stock age tools can decrypt it too, but they won't check the signed record. |
@@ -457,17 +461,18 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Added line, Argon2id | Packages made with Argon2id open only in sealdrop. |
 | Added line, timed | Packages with timed release open only in sealdrop. |
 | Passphrase tile title | Passphrase, shown once |
-| Passphrase words | one `.neu-inset.passphrase` block (28 px, weight 700, letter-spacing .01em, line-height 1.4), words separated by a visible middle dot (`<span class="passphrase__sep" aria-hidden="true"> · </span>` between words, with a real space in the text so a screen reader and Copy see plain words), wrapping at the separators; selectable text; `aria-label="Passphrase"` |
+| Passphrase words | one `.neu-inset.passphrase` block (28 px, weight 700, letter-spacing .01em, line-height 1.4), each word in its own `<span>` followed by a plain space, with `<span class="passphrase__sep" aria-hidden="true"> · </span>` between words (the separator text is ` · `); wraps at the separators; selectable; `role="group"` `aria-label="Passphrase"`. Copy copies the space-joined words. |
 | Entropy line (exact format, bits to one decimal) | [bits] bits — send it on a different channel (for example `77.5 bits — send it on a different channel`) |
 | QR | Rendered client-side from the words with the `qrcode` npm package into a 168 px `<canvas>` inside `.qr` (dark modules on white, 4-module quiet zone), `aria-hidden`; the word block is the accessible version. Caption: Scan to read the passphrase. |
-| Buttons | Copy (copies the words separated by single spaces) / Hide |
+| Buttons | Copy / Hide |
 | After Copy | Copied. Clear your clipboard once you have shared it. |
 | Note (shown once per seal; navigating away clears it) | Shown once and not saved anywhere. Anyone with this passphrase and the package can open it. |
 | Auto-clear note | Clears when you leave this screen. |
 | After Hide (replaces the tile) | Passphrase hidden. It can't be shown again. If you haven't shared it, seal the file again. |
 | Timed tile title | Timed release |
 | Timed tile text | The recipient can open this only within [window] after they first open it. This does not protect the contents once decrypted. |
-| Timed tile extra | The release service keeps the key. A signed receipt appears in Keys after the package is first opened. |
+| Timed line | Timed release: [window] after first open. |
+| Timed tile extra | Key placed with [host]. After it is first opened, check the receipt in Keys with this manifest. |
 
 **Error state** (a `notice--err` above the button, error glyph, text in `--ink`; the failing field also gets `aria-invalid`)
 
@@ -483,17 +488,62 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Anything else | Couldn't seal: [reason]. No package was kept. |
 | Button | Try again (SoftButton default) |
 
-### 4.4 States
+### 4.4 Success wireframe (passphrase mode, timed release)
+
+After a successful seal the grid reorganises: left `.span-7` = the "Sealed" result tile over the "Passphrase" tile (words block with the QR canvas beside it); right `.span-5` = "Sending it" over "Timed release" (timed only; in a recipients-mode seal the passphrase tile is absent and the left column holds the result tile only).
+
+```
+
+   (~~~)     Seal                                                                        ( * Identity ready )
+             Lock a file or folder, sign it, and get a delivery record.
+
+             ╭─────────────────────────────────────────────────────╮ ╭──────────────────────────────────────╮
+  ┌╌╌╌╌╌┐    │ SEALED                                              │ │ SENDING IT                           │
+  ┆ [@] ┆    │ (ok) Sealed. 3 files written to Documents\sealed.   │ │                                      │
+  └╌╌╌╌╌┘    │                                                     │ │ 1. Send all three files to your      │
+   Seal      │ Package     report-q3.sealdrop.age        ( Copy )  │ │ recipient.                           │
+             │ Manifest    report-q3.manifest.json                 │ │                                      │
+  ╭─────╮    │ Signature   report-q3.manifest.json.minisig         │ │ 2. Give them the passphrase another  │
+  │ [v] │    │                                                     │ │ way, such as a phone call. Do not    │
+  ╰─────╯    │ Package id  3f2a91c0-7d44-4b0e-9a1f-c5d2e8b71e04    │ │ put both in one message.             │
+   Open      │ SHA-256     9c1f...e0a4                  ( Copy )   │ │                                      │
+             │ Size        48.3 MB, 12 files                       │ │ 3. They open the package in sealdrop │
+  ╭─────╮    │                                                     │ │ (Open).                              │
+  │ [/] │    │ ( Copy folder path )   ( Seal another )             │ │                                      │
+  ╰─────╯    │ Package, manifest and signature stay together.      │ │                                      │
+  Verify     ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
+             ╭─────────────────────────────────────────────────────╮ ╭──────────────────────────────────────╮
+  ╭─────╮    │ PASSPHRASE, SHOWN ONCE                              │ │ TIMED RELEASE                        │
+  │[o-] │    │                                                     │ │                                      │
+  ╰─────╯    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐  ┌──────────────────┐ │ │ Timed release: 10 minutes after      │
+   Keys      │ ┆                           ┆  │                  │ │ │ first open.                          │
+             │ ┆ abacus · cargo · drift ·  ┆  │  ████ ██ ██████  │ │ │                                      │
+             │ ┆ eagle · fable · galaxy    ┆  │  ███  █ █ ███ █  │ │ │ The recipient can open this only     │
+             │ ┆                           ┆  │  █ ██ ███ █████  │ │ │ within 10 minutes after they first   │
+             │ ┆ (.passphrase, 28 px)      ┆  │  ███    █ ██ ██  │ │ │ open it. This does not protect the   │
+             │ ┆                           ┆  │                  │ │ │ contents once decrypted.             │
+             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘  └──────────────────┘ │ │                                      │
+             │                                                     │ │ Key placed with release.example.org. │
+  ╭─────╮    │ 77.5 bits — send it on a different channel          │ │                                      │
+  │ [=] │    │                                                     │ │ After it is first opened, check the  │
+  ╰─────╯    │ ( Copy )  ( Hide )                                  │ │ receipt in Keys with this manifest.  │
+ Settings    │ Shown once and not saved anywhere. Anyone with this │ │                                      │
+             │ passphrase and the package can open it.             │ │                                      │
+             ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
+ sealdrop 0.2
+```
+
+### 4.5 States
 
 | State | What changes visually |
 |---|---|
 | Idle | Drop zone inset (empty, or showing the chosen item); chips and fields as entered; Seal is raised blue-ac but `aria-disabled="true"` (opacity .5) with the reason text beneath until every requirement is met. Timed tile shows "Off" text when the toggle is off. |
 | Dragging | Drop zone gets `data-active="true"` (dashed blue-deep outline 12 px inside) and the headline reads "Release to add". |
 | Working | Text inputs and selects in tiles A to E are natively `disabled`; buttons, toggles and segments are `aria-disabled="true"`; Seal reads "Sealing…"; a `progress` pill appears above the button (determinate when the core reports bytes, otherwise `data-indeterminate="true"`) with the phase text under it. No cancel in 0.2. |
-| Success | Left column swaps to the "Sealed" tile and "Sending it"; the passphrase tile (passphrase mode) takes the right column; the timed tile is added when relevant. Focus moves to the "Sealed." heading (`tabindex="-1"`). "Seal another" resets everything, including clearing the passphrase from memory. |
+| Success | The grid becomes the success layout in 4.4: result tile and passphrase tile on the left, "Sending it" and (timed) "Timed release" on the right. Focus moves to the "Sealed." heading (`tabindex="-1"`). "Seal another" resets everything, including clearing the passphrase from memory. |
 | Error | `notice--err` above the button; inputs re-enabled; the relevant field has a danger-ac ring and `field__error`. The user's input is kept. |
 
-### 4.5 Accessibility notes
+### 4.6 Accessibility notes
 
 - Tab order: nav, banner button (if shown), Choose file…, Choose folder…, Clear, delivery-method segment (one stop, arrow keys), recipient field, Add, each chip's remove button, "Also encrypt to me", hardware-only toggle (if shown), Timed release toggle, Window, unit, Details disclosure, revealed fields, Choose… (save), Seal. In passphrase mode the recipient controls are replaced by word list, word count, key strength.
 - The drop zone has no unique keyboard function of its own: Choose file… and Choose folder… are the keyboard alternative and are always visible.
@@ -539,14 +589,14 @@ Purpose: choose a package, see its signed delivery record, unlock it (passphrase
    Keys      │                                                     │ │ No passphrase needed.                │
              │ Package id      3f2a91c0-...-b71e                   │ ╰──────────────────────────────────────╯
              │ Sealed with     sealdrop 0.2.0                      │ ╭──────────────────────────────────────╮
-             │ Opens with      your identity key, once the release │ │ RESTORE INTO                         │
-             │                 service allows it                   │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+             │ Opens with      your identity key, after the release│ │ RESTORE INTO                         │
+             │                 service allows it (timed)           │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
              │                                                     │ │ ┆ Temporary folder                 ┆ │
              │ Expected signer (optional)                          │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
              │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ ( Save to... )                       │
-  ╭─────╮    │ ┆ Paste a signer key (starts with RWQ)            ┆ │ │ Deleted when you close sealdrop      │
-  │ [=] │    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ unless you choose a folder.          │
-  ╰─────╯    │                                                     │ │                                      │
+  ╭─────╮    │ ┆ Paste a signer key (starts with RWQ)            ┆ │ │ Removed when you close sealdrop      │
+  │ [=] │    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ (best effort; copies you made        │
+  ╰─────╯    │                                                     │ │ elsewhere are not touched).          │
  Settings    │ v  More options                                     │ │ [[ Open and start the clock ]]       │
              │                                                     │ │                                      │
              ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
@@ -569,9 +619,9 @@ After a successful open of a timed package:
   ┌╌╌╌╌╌┐    │                                                     │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
   ┆ [v] ┆    │ ( Copy folder path )   ( Save to... )               │ │                                      │
   └╌╌╌╌╌┘    │                                                     │ │ First opened 13 Oct 09:12 UTC        │
-   Open      │ Saved to a temporary folder. It is deleted when you │ │ (service clock)                      │
-             │ close sealdrop.                                     │ │                                      │
-  ╭─────╮    │                                                     │ │ Expiry applies to the encrypted      │
+   Open      │ Saved to a temporary folder. It is removed when you │ │ (service clock)                      │
+             │ close sealdrop (best effort; copies you made        │ │                                      │
+  ╭─────╮    │ elsewhere are not touched).                         │ │ Expiry applies to the encrypted      │
   │ [/] │    │ ( Open another package )                            │ │ package only; nothing can recall a   │
   ╰─────╯    │                                                     │ │ file after it has been decrypted.    │
   Verify     │                                                     │ │                                      │
@@ -680,7 +730,7 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 | Path default, normal package | [folder of the package] (helper: Next to the package.) |
 | Path default, timed package | Temporary folder |
 | Buttons | Choose… (normal) / Save to… (timed) |
-| Helper, timed | Deleted when you close sealdrop, unless you choose a folder. |
+| Helper, timed | Removed when you close sealdrop (best effort; copies you made elsewhere are not touched). |
 | Helper, Save to… | Saving to a folder unlocks the package a second time, inside the window. |
 | Primary button, normal | Open |
 | Primary button, timed | Open and start the clock |
@@ -696,7 +746,7 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 | Sub line | [n] files restored to [path]. |
 | Integrity line (ok glyph; `verified: true`) | Contents match the signed record. |
 | Integrity line when Skip verification was on (`verified: false`; hide the line above; warn badge) | Signature NOT verified — you chose to skip verification. |
-| Temporary folder note | Saved to a temporary folder. It is deleted when you close sealdrop. |
+| Temporary folder note | Saved to a temporary folder. It is removed when you close sealdrop (best effort; copies you made elsewhere are not touched). |
 | Buttons | Copy folder path / Save to… (temporary only) / Open another package |
 | Files tile title | Files |
 | File list | tree of the first 8 entries with sizes, then `…and [n] more` |
@@ -728,7 +778,7 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 - The pill reads `expires in [time]` and is a `role="timer"` with `aria-label="Time left"`. It is not a live region.
 - Colour is a secondary cue: `running` sage slab; `low` pink slab when 25% of the window or less remains or under 60 s; `expired` inset slab reading "expired". The word and the digits always carry the meaning.
 - A separate visually hidden live region (`aria-live="polite"`) announces only at thresholds: "10 minutes left", "1 minute left", "30 seconds left", "The window has ended." (when the window is shorter than a threshold, skip it).
-- The value is derived from the service's `expires_at`, never from a local deadline (section 11, `open_package` and `receipt_fetch`). Display ticks once per second with no animation. The display never extends a window: it can only count down and then read "expired".
+- The value is derived from the service's `remaining_secs` sample (read on the service clock when `open_package` or `receipt_fetch` responds) and advanced with a monotonic timer, never from `expires_at` minus the local clock. `expires_at` and `first_unlock` are display-only timestamps ("First opened [date] UTC"). Display ticks once per second with no animation. The display never extends a window: it can only count down and then read "expired".
 
 ### 5.5 States
 
@@ -765,7 +815,7 @@ Purpose: check a package's signature and ciphertext hash without decrypting anyt
              ╭─────────────────────────────────────────────────────╮ ╭──────────────────────────────────────╮
   ╭─────╮    │ PACKAGE                                             │ │ SIGNER                               │
   │ [@] │    │ report-q3.sealdrop.age                              │ │                                      │
-  ╰─────╯    │ 48.3 MB                                             │ │ ‹ ! Unknown signer ›                 │
+  ╰─────╯    │ 48.3 MB                                             │ │ ‹ ! Signer not trusted ›             │
    Seal      │                                                     │ │                                      │
              │ ( Choose package... )   or drop one here            │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
   ╭─────╮    │                                                     │ │ ┆ RWQf6LRCGA9i53mlYecO4IzT...      ┆ │
@@ -848,7 +898,7 @@ Signer tile:
 |---|---|
 | Tile title | Signer |
 | Trusted | [name] (trusted) · key shown in mono · link-btn "Manage in Keys" |
-| Unknown chip | Unknown signer |
+| Untrusted chip | Signer not trusted |
 | Unknown helper | Check this key with the sender by another route before you trust it. |
 | Name label / placeholder | Name / e.g. alice |
 | Name helper | Letters, digits, - and _ only. |
@@ -1007,8 +1057,7 @@ Header: title "Keys"; subtitle "Your identity, trusted signers and receipts."
 | Row, window running (Countdown `running`/`low`, ticking from `remaining_secs`) | [name] · Opened [date] UTC · expires in [time] · Opened [n] time(s) · Receipt verified |
 | Row, window over | [name] · Opened [date] UTC, expired · Receipt verified |
 | Verified badge (`pinned: true`; `receipt_fetch` always pins to the service key in the manifest) | Receipt verified |
-| Unpinned badge (warn; only when a result has `pinned: false`) | Signature valid — service key not checked |
-| Unpinned helper | Enter the service key from the sealed manifest to pin it. |
+| Pinned key note | Receipts are checked against the service key recorded in the signed manifest of the package you sealed. |
 | Footer note | Receipts are signed by the release service, and the service clock decides the times shown here. |
 | Session note | Receipts you check here are not saved. They are gone when you close sealdrop. |
 | Empty | No receipts checked yet. Choose the manifest of a timed package you sealed to see when it was opened. |
@@ -1040,7 +1089,7 @@ Header: title "Keys"; subtitle "Your identity, trusted signers and receipts."
 
 ## 8. Screen: Settings
 
-Purpose: set the release service and deposit token, choose passphrase options (with the honest Argon2id note), and set defaults. Everything here is local; nothing leaves the computer.
+Purpose: set the release service and deposit token, choose passphrase options (with the honest Argon2id note), and set defaults. These settings are stored locally. The release service address below is the only address sealdrop will contact on your behalf; see Network.
 
 ### 8.1 Wireframe
 
@@ -1110,7 +1159,7 @@ Header: title "Settings"; subtitle "Release service, passphrase options and outp
 | Address label / placeholder | Release service address / https://release.example.org |
 | Address helper | Must start with https://. http:// works only for this computer (localhost). |
 | Token label / placeholder | Deposit token / Paste the token your operator gave you |
-| Token helper | Sent only to the release service that a package's own signed manifest names. Saved in sealdrop's settings on this computer. |
+| Token helper | Saved in sealdrop's settings on this computer. When you seal, sealdrop signs the manifest and then deposits the key with the service you configured. When you open a timed package or check a receipt, sealdrop verifies the manifest signature first and sends the deposit token only to the service named in that signed manifest. |
 | Show / Hide | Show / Hide |
 | Button | Save |
 | Saved | Saved. |
@@ -1208,7 +1257,7 @@ Secrets
 
 Honesty
 
-- Say or imply that expiry removes decrypted content. The two fixed sentences appear wherever timed release appears (Seal, Open and Verify). Never write "self-destruct", "revoke", "erase" or "secure" about a package.
+- Say or imply that expiry removes decrypted content. The Seal sentence appears on Seal; the expiry sentence appears on Open and Verify. Never write "self-destruct", "revoke", "erase" or "secure" about a package.
 - Decide expiry from the local clock. The countdown is a display of the service's `expires_at`; the service is the authority.
 - Treat an unknown signer as fine. It is a warning that blocks opening until the user trusts the key or enters the expected key.
 - Hide the Argon2id caveat. The note is always visible next to the toggle and again wherever Argon2id is used.
@@ -1239,13 +1288,13 @@ Fixed facts, decided after design review. These are the Tauri commands the scree
 | `seal(args)` | `{ package, manifest, package_id, ciphertext_sha256, files, bytes, passphrase?, entropy_bits?, release?: { service, window_secs } }` | Seal. `passphrase` and `entropy_bits` are present only in passphrase mode; `release` only for timed release. |
 | `probe(path)` | `{ needs_passphrase, timed_release?: { service, release_id } }` | Open, for `.sealdrop.age` files only. Decides whether the Unlock tile asks for a passphrase and whether the Timed package tile shows. The Seal input is never probed or pre-scanned: the Seal DropZone shows the chosen path and nothing else (no "[n] files · [size]"). |
 | `verify(path, signer?)` | `{ ok, untrusted_signer?, package_id?, signer?, trusted_as?, created?, classification?, expires?, recipients?: [{ kind, fingerprint }], release?: { service, window_secs }, ciphertext_sha256? }` | Verify and the Delivery record in Open. `ok = false` with `untrusted_signer` set is the "Signer not trusted" state; the "Trust this signer" mini-form (name field) uses that key with `add_trusted`. Any other failure is an error string and shows the failed state. `signer` (second argument) is the expected-key field. |
-| `open_package(args)` | `{ root, files, bytes, signer?, trusted_as?, verified: bool, first_unlock?, expires_at?, remaining_secs? }` | Open. `verified = false` means "Skip verification" was on: show "Signature NOT verified — you chose to skip verification." (warn badge) and hide "Contents match the signed record." For timed packages `remaining_secs` (service clock) drives the Countdown. |
+| `open_package(args)` with `args` including `temp: boolean` and `out_dir?: string` (plus `path`, `passphrase?`, `signer?`, `overwrite?`, `skip_verify?`, mirroring the CLI) | `{ root, files, bytes, signer?, trusted_as?, verified: bool, first_unlock?, expires_at?, remaining_secs? }` | Open. `verified = false` means "Skip verification" was on: show "Signature NOT verified — you chose to skip verification." (warn badge) and hide "Contents match the signed record." For timed packages `remaining_secs` (service clock) drives the Countdown. |
 | `list_trusted()` / `add_trusted(name, key)` / `remove_trusted(name)` | trusted signers `[{ name, key }]` / ok / ok | Keys, Verify, Open |
 | `get_settings()` / `set_settings(s)` | exactly `{ release_service?, release_token?, scrypt_log_n (18 \| 20), armor, argon2id }` | Settings. These five fields ARE the app defaults; nothing else is persisted (no default word list, save folder or "Also encrypt to me" default; those reset per session). `scrypt_log_n` 18 is "Standard", 20 is "High (slower)"; `armor` is the ASCII armor toggle; `argon2id` is the Settings toggle. |
 | `receipt_fetch(manifest_path)` | `{ release_id, first_unlock?, expires_at?, remaining_secs?, unlock_count, service_key, pinned: true, saved_to }` | Keys (Receipts: "Choose manifest…", then "Check now" per row). The key is pinned to the service key recorded in the manifest, so the chip is always "Receipt verified". `remaining_secs` is the service-clock remaining time at the moment of the response. |
 | `receipt_verify(receipt_path, service_key?)` | same as `receipt_fetch` without `saved_to`, with `pinned: bool` | Verify ("Check a receipt"). `pinned = true` (a service key was entered and matched): "Receipt verified". `pinned = false`: warn chip "Signature valid — service key not checked" plus the helper "Enter the service key from the sealed manifest to pin it." |
 
-Receipt chips, everywhere (Verify and Keys): pinned shows "Receipt verified" (ok badge); not pinned shows "Signature valid — service key not checked" (warn badge) and, where there is a field for it, the helper text above.
+Receipt chips: Keys rows come from `receipt_fetch`, which is always pinned (to the service key recorded in the signed manifest), so they always read "Receipt verified". Verify's receipt check depends on `pinned`: `true` shows "Receipt verified" (ok badge); `false` shows "Signature valid — service key not checked" (warn badge) and the helper text above.
 
 Opening "Save to…" after a temporary open is a second `open_package` call with `temp = false` and an `out_dir`. It is a second unlock inside the window, and the helper under the button says so ("Saving to a folder unlocks the package a second time, inside the window.").
 
@@ -1268,7 +1317,7 @@ The Countdown on Open and in each Keys receipt row is driven by `remaining_secs`
 
 ### 11.4 Rules the backend enforces (the UI relies on them)
 
-- The deposit token is only ever sent to the service recorded in the package's own signed manifest. Receipts and seals both check the manifest signature before the token leaves; the Settings address is where new timed packages are sealed, not a destination for tokens of other packages.
+- When you seal, sealdrop signs the manifest and then deposits the key with the service you configured. When you open a timed package or check a receipt, sealdrop verifies the manifest signature first and sends the deposit token only to the service named in that signed manifest.
 - Argon2id: Standard is the compat profile (256 MiB); High is the desktop profile (2 GiB). The Seal helper for High with Argon2id reads "High needs about 2 GiB of free memory to open." For scrypt, `scrypt_log_n` 18 or 20.
 - The QR is rendered client-side from the words with the `qrcode` npm package into a canvas. Nothing is sent anywhere to make it.
 - `parse_recipient` is the only recipient validation the UI does; it makes no network call.
