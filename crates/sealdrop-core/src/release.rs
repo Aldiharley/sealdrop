@@ -41,7 +41,8 @@ const MAX_INNER_JSON: usize = 64 * 1024;
 /// built from it. Returns the URL without trailing slashes.
 ///
 /// Accepted: `https://<host>[:port][/path]`; `http://` only for `localhost`, `127.0.0.1`
-/// and `[::1]`; and the test scheme `memory://<anything>`. Rejected: any `?`, `#`,
+/// and `[::1]`; and, only in test builds (`cfg(test)` or the `test-support` feature), the test scheme
+/// `memory://<anything>`; in every other build `memory://` is an unsupported scheme. Rejected: any `?`, `#`,
 /// whitespace or control character, plus `@` and `\` (userinfo / parser-confusion tricks).
 pub fn validate_service_url(s: &str) -> Result<String> {
     let bad = |why: &str| Error::Release(format!("invalid service URL: {why}"));
@@ -57,6 +58,7 @@ pub fn validate_service_url(s: &str) -> Result<String> {
     }
     // `memory://` is the in-process test transport. ureq has no transport for the scheme
     // (it rejects it), so it can never reach the network from `HttpFetch`/`deposit`.
+    #[cfg(any(test, feature = "test-support"))]
     if scheme == "memory" {
         return Ok(format!("{scheme}://{}", rest.trim_end_matches('/')));
     }

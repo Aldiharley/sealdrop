@@ -73,17 +73,22 @@ pub fn bundle_paths(package: &Path) -> (PathBuf, PathBuf) {
 }
 
 /// Test seam: remembers the last deposit made against the `memory://` service so tests
-/// can construct a `MemoryFetch` that serves it.
+/// can construct a `MemoryFetch` that serves it. Compiled only for tests and the
+/// `test-support` feature, so production builds have no `memory://` shortcut.
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support {
-    use std::sync::Mutex;
+    use std::cell::RefCell;
     use zeroize::Zeroizing;
-    static LAST: Mutex<Option<Zeroizing<[u8; 32]>>> = Mutex::new(None);
+    // Per-thread, so parallel tests that each seal and then read cannot see each other's key.
+    thread_local! {
+        static LAST: RefCell<Option<Zeroizing<[u8; 32]>>> = const { RefCell::new(None) };
+    }
     pub fn remember(k: &Zeroizing<[u8; 32]>) {
-        *LAST.lock().unwrap() = Some(k.clone());
+        LAST.with(|l| *l.borrow_mut() = Some(k.clone()));
     }
     pub fn last_memory_deposit() -> Option<Zeroizing<[u8; 32]>> {
-        LAST.lock().unwrap().clone()
+        LAST.with(|l| l.borrow().clone())
     }
 }
 
@@ -120,6 +125,23 @@ fn create_new(path: &Path) -> Result<File> {
             std::io::ErrorKind::AlreadyExists => Error::Exists(path.to_path_buf()),
             _ => Error::Io(e),
         })
+}
+
+/// Deposits the release key and returns the service key. Under test, `memory://` is
+/// simulated in-process; in every other build it falls through to the real client, which
+/// has no transport for it and fails.
+#[cfg(any(test, feature = "test-support"))]
+fn deposit_key(service: &str, token: &str, d: &Deposit, package_sha256: &str) -> Result<String> {
+    if service.starts_with("memory://") {
+        test_support::remember(&d.k_release);
+        return Ok("memory".to_string());
+    }
+    release::deposit(service, token, d, package_sha256)
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+fn deposit_key(service: &str, token: &str, d: &Deposit, package_sha256: &str) -> Result<String> {
+    release::deposit(service, token, d, package_sha256)
 }
 
 pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Result<SealResult> {
@@ -181,6 +203,14 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
 
     // Paths.
     std::fs::create_dir_all(&req.out_dir)?;
+    // Refuse to write the bundle inside the folder being packed (it would pack itself).
+    let input_abs = std::fs::canonicalize(&req.input)?;
+    let out_abs = std::fs::canonicalize(&req.out_dir)?;
+    if input_abs.is_dir() && out_abs.starts_with(&input_abs) {
+        return Err(Error::Other(
+            "output folder must not be inside the input folder".into(),
+        ));
+    }
     let name = req
         .input
         .file_name()
@@ -221,12 +251,7 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
         progress.on(ProgressEvent::Contacting {
             service: service.clone(),
         });
-        let service_key = if service.starts_with("memory://") {
-            test_support::remember(&d.k_release);
-            "memory".to_string()
-        } else {
-            release::deposit(service, &rc.token, d, &ct_sha)?
-        };
+        let service_key = deposit_key(service, &rc.token, d, &ct_sha)?;
         release_info = Some(ReleaseInfo {
             service: service.clone(),
             release_id: d.release_id.clone(),

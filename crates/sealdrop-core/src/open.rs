@@ -1,7 +1,7 @@
 //! Verify and open (spec 6, 7, 8): verify manifest and ciphertext hash before decrypting.
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use age::secrecy::SecretString;
@@ -10,7 +10,7 @@ use crate::crypt;
 use crate::extract::{extract, ExtractReport, Limits};
 use crate::keys::KeyStore;
 use crate::manifest::{self, Manifest};
-use crate::probe::probe;
+use crate::probe::{probe_bytes, HEADER_MAX};
 use crate::progress::{Progress, ProgressEvent};
 use crate::release::{self, ReleaseFetch, Unlock};
 use crate::seal::bundle_paths;
@@ -56,6 +56,19 @@ fn resolve_signer(
 
 /// Checks the signed manifest and the ciphertext hash. Never decrypts anything.
 pub fn verify(store: &KeyStore, package: &Path, signer: Option<&str>) -> Result<VerifyReport> {
+    let mut file = File::open(package)?;
+    verify_with(store, package, &mut file, signer)
+}
+
+/// Verification over an already-open package handle, so `open` can hash and decrypt the
+/// very same file (no window to swap the path between the check and the use). The handle
+/// is read from its current position to the end.
+fn verify_with(
+    store: &KeyStore,
+    package: &Path,
+    file: &mut File,
+    signer: Option<&str>,
+) -> Result<VerifyReport> {
     let (mpath, spath) = bundle_paths(package);
     let bytes = std::fs::read(&mpath)
         .map_err(|_| Error::Verify(format!("manifest not found: {}", mpath.display())))?;
@@ -87,7 +100,7 @@ pub fn verify(store: &KeyStore, package: &Path, signer: Option<&str>) -> Result<
             "manifest ciphertext.file does not match the package file name".into(),
         ));
     }
-    let (sha, size) = crate::hashing::sha256_file(package)?;
+    let (sha, size) = crate::hashing::sha256_reader(file)?;
     if sha != doc.ciphertext.sha256 || size != doc.ciphertext.size {
         return Err(Error::Verify(
             "ciphertext hash does not match the signed manifest".into(),
@@ -125,22 +138,46 @@ pub fn open(
     fetch: Box<dyn ReleaseFetch>,
     progress: &dyn Progress,
 ) -> Result<OpenReport> {
+    // One handle for the whole operation: the bytes that are hashed are the bytes that
+    // are decrypted, even if the path is swapped meanwhile.
+    let mut file = File::open(&req.package)?;
     let verify_report = if req.skip_verify {
         None
     } else {
         progress.on(ProgressEvent::Verifying);
-        Some(verify(store, &req.package, req.signer.as_deref())?)
+        Some(verify_with(
+            store,
+            &req.package,
+            &mut file,
+            req.signer.as_deref(),
+        )?)
     };
-    let p = probe(&req.package)?;
+    file.rewind()?;
+    let mut head = Vec::with_capacity(HEADER_MAX + 1);
+    (&mut file)
+        .take(HEADER_MAX as u64 + 1)
+        .read_to_end(&mut head)?;
+    let p = probe_bytes(&head)?;
+    file.seek(SeekFrom::Start(0))?;
     if p.needs_passphrase && req.passphrase.is_none() {
         return Err(Error::Other("this package needs a passphrase".into()));
     }
 
+    // An absent identity file falls through to the passphrase-only path; a present one
+    // that cannot be used is an error, never silently skipped.
     let mut inner: Vec<Box<dyn age::Identity>> = Vec::new();
-    if let Ok(id) = store.identity() {
-        inner.push(Box::new(id));
-    }
-    if let Ok(lines) = store.plugin_identity_lines() {
+    if store.has_identity() {
+        let mut have_secret = true;
+        match store.identity() {
+            Ok(id) => inner.push(Box::new(id)),
+            // Plugin-only identity files have no x25519 secret key line.
+            Err(Error::InvalidIdentity) => have_secret = false,
+            Err(e) => return Err(e),
+        }
+        let lines = store.plugin_identity_lines()?;
+        if !have_secret && lines.is_empty() {
+            return Err(Error::InvalidIdentity);
+        }
         if !lines.is_empty() {
             // `plugin_identity_lines` returns zeroizing strings; borrow them as &str so no
             // plain copies are made.
@@ -163,7 +200,7 @@ pub fn open(
         });
     }
     let wrapper = release::Identity::new(inner, fetch);
-    let file = BufReader::new(File::open(&req.package)?);
+    let file = BufReader::new(file);
     let ids: Vec<Box<dyn age::Identity + '_>> = vec![Box::new(IdentityRef(&wrapper))];
     let reader = crypt::decrypt_reader(file, &ids)?;
     progress.on(ProgressEvent::Extracting {
@@ -537,5 +574,220 @@ mod tests {
         });
         assert!(seal(&ks, rq, &NoProgress).is_err());
         assert!(!out2.join("report.sealdrop.age").exists());
+    }
+
+    #[test]
+    fn timed_release_does_not_add_self_and_opens_for_the_other_recipient() {
+        let (d, ks) = store();
+        let (d2, other) = store();
+        let _keep = d2;
+        // The recipient trusts the sender so verification can pass on its side.
+        other
+            .add_trusted("sender", &ks.signing_public_string().unwrap())
+            .unwrap();
+        let mut rq = req(
+            input(d.path()),
+            d.path().join("out"),
+            Mode::Recipients(vec![me(&other)]),
+        );
+        rq.release = Some(crate::seal::ReleaseConfig {
+            service: "memory://test".into(),
+            token: "t".into(),
+            window_secs: 90,
+        });
+        let res = seal(&ks, rq, &NoProgress).unwrap();
+        assert_eq!(res.manifest_doc.recipients.len(), 1);
+        assert_eq!(
+            res.manifest_doc.recipients[0].fingerprint,
+            me(&other).fingerprint()
+        );
+
+        let args = crate::probe::probe(&res.package).unwrap().release.unwrap();
+        let k = crate::seal::test_support::last_memory_deposit().unwrap();
+        let serve = || {
+            let d2 = Deposit {
+                release_id: args.release_id.clone(),
+                k_release: k.clone(),
+                unlock_token: zeroize::Zeroizing::new([0u8; 32]),
+                window_secs: 90,
+            };
+            let mut f = MemoryFetch::serving(&d2);
+            f.set_expected_token(&args.unlock_token_b64);
+            f
+        };
+        // The sender's own key is not a recipient, even with the service answering.
+        let mut rq = open_req(res.package.clone(), d.path().join("sender-open"));
+        rq.skip_verify = true;
+        assert!(open(&ks, rq, Box::new(serve()), &NoProgress).is_err());
+        // The intended recipient opens it.
+        let opened = open(
+            &other,
+            open_req(res.package.clone(), d.path().join("rcpt-open")),
+            Box::new(serve()),
+            &NoProgress,
+        )
+        .unwrap();
+        assert_eq!(opened.extract.files, 2);
+        assert!(opened.release.is_some());
+    }
+
+    #[test]
+    fn armored_round_trip() {
+        let (d, ks) = store();
+        let mut rq = req(
+            input(d.path()),
+            d.path().join("out"),
+            Mode::Recipients(vec![me(&ks)]),
+        );
+        rq.armor = true;
+        let res = seal(&ks, rq, &NoProgress).unwrap();
+        let head = std::fs::read(&res.package).unwrap();
+        assert!(head.starts_with(b"-----BEGIN AGE ENCRYPTED FILE-----"));
+        let opened = open(
+            &ks,
+            open_req(res.package.clone(), d.path().join("r")),
+            Box::new(MemoryFetch::expired()),
+            &NoProgress,
+        )
+        .unwrap();
+        assert_eq!(opened.extract.files, 2);
+        assert!(opened.verify.unwrap().ciphertext_ok);
+    }
+
+    #[test]
+    fn tampered_manifest_fails_verification() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        // Keep the JSON valid but change a signed value.
+        let mut bytes = std::fs::read(&res.manifest).unwrap();
+        let at = bytes
+            .windows(12)
+            .position(|w| w == b"confidential")
+            .unwrap();
+        bytes[at] = b'C';
+        std::fs::write(&res.manifest, bytes).unwrap();
+        assert!(matches!(
+            verify(&ks, &res.package, None),
+            Err(crate::Error::Verify(_))
+        ));
+        let blocked = d.path().join("blocked");
+        assert!(matches!(
+            open(
+                &ks,
+                open_req(res.package.clone(), blocked.clone()),
+                Box::new(MemoryFetch::expired()),
+                &NoProgress
+            ),
+            Err(crate::Error::Verify(_))
+        ));
+        assert!(!blocked.exists());
+    }
+
+    #[test]
+    fn preexisting_manifest_survives_a_failed_seal() {
+        let (d, ks) = store();
+        let out = d.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let keep = out.join("report.manifest.json");
+        std::fs::write(&keep, b"keep me").unwrap();
+        let err = seal(
+            &ks,
+            req(
+                input(d.path()),
+                out.clone(),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(matches!(err, crate::Error::Exists(_)), "{err}");
+        assert_eq!(std::fs::read(&keep).unwrap(), b"keep me");
+        assert!(!out.join("report.sealdrop.age").exists());
+        assert!(!out.join("report.manifest.json.minisig").exists());
+    }
+
+    #[test]
+    fn seal_refuses_output_inside_input() {
+        let (d, ks) = store();
+        let inp = input(d.path());
+        for out in [inp.join("out"), inp.join("sub").join("deeper")] {
+            let err = seal(
+                &ks,
+                req(inp.clone(), out.clone(), Mode::Recipients(vec![me(&ks)])),
+                &NoProgress,
+            )
+            .map(|_| ())
+            .unwrap_err();
+            assert!(err.to_string().contains("must not be inside"), "{err}");
+            assert!(!out.join("report.sealdrop.age").exists());
+        }
+        // The input folder itself is also inside itself.
+        let err = seal(
+            &ks,
+            req(inp.clone(), inp.clone(), Mode::Recipients(vec![me(&ks)])),
+            &NoProgress,
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("must not be inside"), "{err}");
+        // A sibling folder is fine.
+        seal(
+            &ks,
+            req(
+                inp.clone(),
+                d.path().join("sibling"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn open_propagates_unusable_identity_instead_of_skipping_it() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        // Corrupt the identity file: no usable secret key, no plugin lines.
+        std::fs::write(
+            ks.dir().join("identity.txt"),
+            "# nothing usable
+",
+        )
+        .unwrap();
+        let mut rq = open_req(res.package.clone(), d.path().join("r"));
+        rq.skip_verify = true;
+        let err = open(&ks, rq, Box::new(MemoryFetch::expired()), &NoProgress)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::InvalidIdentity), "{err}");
+
+        // An identity path that cannot be read as a file (a directory) is also an error.
+        std::fs::remove_file(ks.dir().join("identity.txt")).unwrap();
+        std::fs::create_dir(ks.dir().join("identity.txt")).unwrap();
+        let mut rq = open_req(res.package.clone(), d.path().join("r2"));
+        rq.skip_verify = true;
+        let err = open(&ks, rq, Box::new(MemoryFetch::expired()), &NoProgress)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::KeyStore(_)), "{err}");
     }
 }

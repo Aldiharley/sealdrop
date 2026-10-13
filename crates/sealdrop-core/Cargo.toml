@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "Core library for sealdrop: age packaging, signed manifests, hardened extraction, timed release"
 
+[features]
+# Test-only seams (`memory://` timed-release transport). Never enable in release builds.
+test-support = []
+
 [dependencies]
 age.workspace = true
 age-core.workspace = true

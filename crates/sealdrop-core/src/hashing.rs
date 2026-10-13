@@ -46,14 +46,13 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
-/// Streams a file through SHA-256. Returns `(hex, size)`.
-pub fn sha256_file(path: &Path) -> Result<(String, u64)> {
-    let mut f = File::open(path)?;
+/// Streams a reader through SHA-256 from its current position. Returns `(hex, size)`.
+pub fn sha256_reader(r: &mut impl Read) -> Result<(String, u64)> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
     let mut total = 0u64;
     loop {
-        let n = f.read(&mut buf)?;
+        let n = r.read(&mut buf)?;
         if n == 0 {
             break;
         }
@@ -61,6 +60,11 @@ pub fn sha256_file(path: &Path) -> Result<(String, u64)> {
         total += n as u64;
     }
     Ok((hex::encode(hasher.finalize()), total))
+}
+
+/// Streams a file through SHA-256. Returns `(hex, size)`.
+pub fn sha256_file(path: &Path) -> Result<(String, u64)> {
+    sha256_reader(&mut File::open(path)?)
 }
 
 #[cfg(test)]

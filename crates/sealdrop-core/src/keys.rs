@@ -144,6 +144,11 @@ impl KeyStore {
         self.dir.join("settings.json")
     }
 
+    /// Whether an identity file is present (it may still be unreadable or invalid).
+    pub fn has_identity(&self) -> bool {
+        self.identity_path().exists()
+    }
+
     pub fn exists(&self) -> bool {
         self.identity_path().exists() && self.sign_key_path().exists()
     }
