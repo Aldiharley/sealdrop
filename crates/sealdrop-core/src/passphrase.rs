@@ -2,6 +2,7 @@
 
 use rand::Rng;
 use secrecy::SecretString;
+use zeroize::Zeroizing;
 
 pub const EFF_RAW: &str = include_str!("../wordlists/eff_large_wordlist.txt");
 pub const BIP39_RAW: &str = include_str!("../wordlists/bip39_english.txt");
@@ -13,16 +14,16 @@ pub enum WordList {
 }
 
 pub struct Passphrase {
-    pub words: Vec<String>,
+    pub words: Zeroizing<Vec<String>>,
     pub entropy_bits: f64,
 }
 
 impl Passphrase {
-    pub fn joined(&self) -> String {
-        self.words.join(" ")
+    pub fn joined(&self) -> Zeroizing<String> {
+        Zeroizing::new(self.words.join(" "))
     }
     pub fn as_secret(&self) -> SecretString {
-        SecretString::from(self.joined())
+        SecretString::from(self.words.join(" "))
     }
 }
 
@@ -63,7 +64,7 @@ pub fn generate(list: WordList, count: usize) -> Passphrase {
         .collect();
     let entropy_bits = n as f64 * (words.len() as f64).log2();
     Passphrase {
-        words: chosen,
+        words: Zeroizing::new(chosen),
         entropy_bits,
     }
 }
@@ -100,9 +101,8 @@ mod tests {
 
     #[test]
     fn two_passphrases_differ() {
-        assert_ne!(
-            generate(WordList::Eff, 6).joined(),
-            generate(WordList::Eff, 6).joined()
-        );
+        let a = generate(WordList::Eff, 6).joined();
+        let b = generate(WordList::Eff, 6).joined();
+        assert_ne!(*a, *b);
     }
 }
