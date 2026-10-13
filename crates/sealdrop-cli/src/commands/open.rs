@@ -48,7 +48,7 @@ pub fn run(a: Args) -> anyhow::Result<()> {
                 Ok(()) => format!(" (release {})", h.release_id),
                 Err(_) => String::new(),
             };
-            println!(
+            out!(
                 "This package claims timed release via {service}{id} (unverified header; window unknown)."
             );
         } else {
@@ -67,13 +67,13 @@ pub fn run(a: Args) -> anyhow::Result<()> {
                 .into());
             }
             inner_kind = v.manifest.recipients.first().map(|r| r.kind.clone());
-            println!(
+            out!(
                 "This package uses timed release: {} after first open, enforced by {}",
                 super::human(r.window_secs),
                 r.service
             );
         }
-        println!("Opening it starts or continues the window on the service's clock.");
+        out!("Opening it starts or continues the window on the service's clock.");
     }
     let passphrase = if a.passphrase_stdin {
         Some(read_line_secret()?)
@@ -101,14 +101,14 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         Box::new(HttpFetch),
         &super::StderrProgress,
     )?;
-    println!(
+    out!(
         "restored: {} ({} files, {} bytes)",
         rep.extract.root.display(),
         rep.extract.files,
         rep.extract.bytes
     );
     match &rep.verify {
-        Some(v) => println!(
+        Some(v) => out!(
             "verified: signer {}{}",
             v.signer,
             v.trusted_as
@@ -116,14 +116,15 @@ pub fn run(a: Args) -> anyhow::Result<()> {
                 .map(|n| format!(" ({n})"))
                 .unwrap_or_default()
         ),
-        None => println!("signature NOT verified (--skip-verify)"),
+        None => out!("signature NOT verified (--skip-verify)"),
     }
     if let Some(u) = &rep.release {
-        println!(
+        out!(
             "first opened {} - expires {} (service clock)",
-            u.first_unlock, u.expires_at
+            u.first_unlock,
+            u.expires_at
         );
-        println!("Expiry applies to the encrypted package only; nothing can recall a file after it has been decrypted.");
+        out!("Expiry applies to the encrypted package only; nothing can recall a file after it has been decrypted.");
     }
     Ok(())
 }

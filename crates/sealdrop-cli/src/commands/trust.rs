@@ -23,16 +23,16 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
     match cmd {
         Cmd::Add { name, key } => {
             ks.add_trusted(&name, &key)?;
-            println!("trusted {name}");
+            out!("trusted {name}");
         }
         Cmd::List => {
             for (n, pk) in ks.trusted()? {
-                println!("{n}\t{}", pk.to_base64());
+                out!("{n}\t{}", pk.to_base64());
             }
         }
         Cmd::Remove { name } => {
             ks.remove_trusted(&name)?;
-            println!("removed {name}");
+            out!("removed {name}");
         }
     }
     Ok(())

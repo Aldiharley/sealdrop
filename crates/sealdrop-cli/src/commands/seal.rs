@@ -182,28 +182,28 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         &super::StderrProgress,
     )?;
 
-    println!("sealed: {}", res.package.display());
-    println!("manifest: {}", res.manifest.display());
-    println!("signature: {}", res.signature.display());
-    println!("package id: {}", res.manifest_doc.package_id);
-    println!("ciphertext sha256: {}", res.manifest_doc.ciphertext.sha256);
+    out!("sealed: {}", res.package.display());
+    out!("manifest: {}", res.manifest.display());
+    out!("signature: {}", res.signature.display());
+    out!("package id: {}", res.manifest_doc.package_id);
+    out!("ciphertext sha256: {}", res.manifest_doc.ciphertext.sha256);
     if let Some(r) = &res.manifest_doc.release {
-        println!(
+        out!(
             "Timed release: {} after first open, enforced by {}",
             super::human(r.window_secs),
             r.service
         );
-        println!("This does not protect the contents once decrypted.");
+        out!("This does not protect the contents once decrypted.");
     }
     if let Some(p) = &res.passphrase {
-        println!("passphrase: {}", *p.joined());
-        println!(
+        out!("passphrase: {}", *p.joined());
+        out!(
             "entropy: {:.1} bits - send it on a different channel from the file",
             p.entropy_bits
         );
         if a.qr {
             let code = qrcode::QrCode::new(p.joined().as_bytes())?;
-            println!(
+            out!(
                 "{}",
                 code.render::<qrcode::render::unicode::Dense1x2>()
                     .quiet_zone(true)
@@ -211,9 +211,7 @@ pub fn run(a: Args) -> anyhow::Result<()> {
             );
         }
         if use_argon2id {
-            println!(
-                "note: Argon2id mode is non-standard; this file will not open in stock age tools"
-            );
+            out!("note: Argon2id mode is non-standard; this file will not open in stock age tools");
         }
     }
     Ok(())

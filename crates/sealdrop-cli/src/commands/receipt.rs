@@ -54,8 +54,8 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 verify_receipt_for(&signed, &r.service_key, &r.release_id, &m.ciphertext.sha256)?;
             let out = manifest.with_file_name(format!("{stem}.receipt.json"));
             std::fs::write(&out, serde_json::to_vec_pretty(&signed)?)?;
-            print(&receipt);
-            println!("saved: {}", out.display());
+            print(&receipt)?;
+            out!("saved: {}", out.display());
         }
         Cmd::Verify {
             receipt,
@@ -64,13 +64,13 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             let signed: SignedReceipt = serde_json::from_slice(&std::fs::read(receipt)?)?;
             let r = verify_receipt(&signed, service_key.as_deref())?;
             if service_key.is_some() {
-                println!("OK: receipt signature valid");
+                out!("OK: receipt signature valid");
             } else {
-                println!("OK (key not pinned): receipt signature valid");
+                out!("OK (key not pinned): receipt signature valid");
             }
-            print(&r);
+            print(&r)?;
             if service_key.is_none() {
-                println!(
+                out!(
                     "note: checked against the key inside the receipt only; pass --service-key <key from the manifest> to prove which service signed it"
                 );
             }
@@ -79,16 +79,17 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn print(r: &Receipt) {
-    println!("release: {}", r.release_id);
-    println!("package sha256: {}", r.package_sha256);
+fn print(r: &Receipt) -> anyhow::Result<()> {
+    out!("release: {}", r.release_id);
+    out!("package sha256: {}", r.package_sha256);
     match &r.first_unlock {
-        Some(t) => println!(
+        Some(t) => out!(
             "first opened: {t} (service clock), expires {}",
             r.expires_at.as_deref().unwrap_or("?")
         ),
-        None => println!("not yet opened"),
+        None => out!("not yet opened"),
     }
-    println!("unlock count: {}", r.unlock_count);
-    println!("service key: {}", r.service_key);
+    out!("unlock count: {}", r.unlock_count);
+    out!("service key: {}", r.service_key);
+    Ok(())
 }

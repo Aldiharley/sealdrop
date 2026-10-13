@@ -2,9 +2,23 @@
 //!
 //! Exit codes: 0 success; 1 any other failure; 2 verification failed or the timed-release
 //! window has expired; 3 refused by policy.
+//!
+//! Everything for stdout goes through `out!`, never `println!`: a reader that goes away
+//! (`sealdrop recipient | head -1`) must end the program quietly with exit 0, not panic
+//! with exit 101.
+
+/// `println!` that returns from the enclosing function (with `StdoutClosed`) instead of
+/// panicking when stdout is a closed pipe.
+macro_rules! out {
+    ($($arg:tt)*) => {
+        $crate::print_line(format_args!($($arg)*))?
+    };
+}
 
 mod commands;
 
+use std::fmt;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -52,6 +66,36 @@ enum Cmd {
         #[command(subcommand)]
         cmd: commands::trust::Cmd,
     },
+}
+
+/// The reader of stdout has gone away; the command stops and the process exits 0 quietly.
+#[derive(Debug)]
+pub(crate) struct StdoutClosed;
+
+impl fmt::Display for StdoutClosed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("stdout was closed")
+    }
+}
+
+impl std::error::Error for StdoutClosed {}
+
+/// Writes one line; a broken pipe becomes `StdoutClosed`, any other failure an error.
+pub(crate) fn write_line<W: Write>(w: &mut W, args: fmt::Arguments<'_>) -> anyhow::Result<()> {
+    match writeln!(w, "{args}").and_then(|()| w.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Err(StdoutClosed.into()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub(crate) fn print_line(args: fmt::Arguments<'_>) -> anyhow::Result<()> {
+    write_line(&mut std::io::stdout().lock(), args)
+}
+
+/// True when the command stopped because stdout was closed: exit 0, print nothing.
+pub(crate) fn is_quiet_exit(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<StdoutClosed>().is_some()
 }
 
 pub(crate) fn store() -> KeyStore {
@@ -127,6 +171,7 @@ fn main() -> ExitCode {
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,
+        Err(e) if is_quiet_exit(&e) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {}", message_for(&e));
             ExitCode::from(exit_code_for(&e))
@@ -153,6 +198,42 @@ mod tests {
         // With added context the underlying error still decides.
         let ctx = anyhow::Error::new(Error::Policy(PolicyError::NoRecipients)).context("hint");
         assert_eq!(exit_code_for(&ctx), 3);
+    }
+
+    /// A writer whose reader has gone away, like a pipe into `head -1` after one line.
+    struct ClosedPipe;
+    impl Write for ClosedPipe {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct Full;
+    impl Write for Full {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn closed_stdout_is_a_quiet_exit_not_a_panic() {
+        let e = write_line(&mut ClosedPipe, format_args!("age1...")).unwrap_err();
+        assert!(is_quiet_exit(&e));
+        // Even with context added on the way up.
+        assert!(is_quiet_exit(&e.context("printing")));
+        // Other write failures stay errors with exit 1.
+        let e = write_line(&mut Full, format_args!("x")).unwrap_err();
+        assert!(!is_quiet_exit(&e));
+        assert_eq!(exit_code_for(&e), 1);
+        let mut buf = Vec::new();
+        write_line(&mut buf, format_args!("a {}", 1)).unwrap();
+        assert_eq!(buf, b"a 1\n");
     }
 
     #[test]
