@@ -235,6 +235,8 @@ pub struct Unlock {
     pub k_release: Zeroizing<[u8; 32]>,
     pub first_unlock: String,
     pub expires_at: String,
+    /// Service clock at the moment of the response (RFC 3339 UTC).
+    pub now: String,
 }
 
 pub trait ReleaseFetch {
@@ -352,6 +354,7 @@ struct UnlockResponse {
     k_release: String,
     first_unlock: String,
     expires_at: String,
+    now: String,
 }
 
 pub struct HttpFetch;
@@ -399,6 +402,7 @@ impl ReleaseFetch for HttpFetch {
             k_release: k,
             first_unlock: body.first_unlock,
             expires_at: body.expires_at,
+            now: body.now,
         })
     }
 }
@@ -450,6 +454,10 @@ pub struct Receipt {
     pub expires_at: Option<String>,
     pub unlock_count: u64,
     pub service_key: String,
+    /// Service clock when the receipt was issued (RFC 3339 UTC). Empty in receipts signed
+    /// before 0.2, which carry no clock sample.
+    #[serde(default)]
+    pub now: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -595,6 +603,7 @@ impl ReleaseFetch for MemoryFetch {
                 k_release: k.clone(),
                 first_unlock: "2026-10-13T09:00:00Z".into(),
                 expires_at: "2026-10-13T09:10:00Z".into(),
+                now: "2026-10-13T09:00:00Z".into(),
             }),
             Some(_) => Err(Error::Release("unlock token rejected".into())),
             None => Err(Error::ReleaseExpired),
@@ -831,6 +840,7 @@ mod tests {
             expires_at: None,
             unlock_count: 0,
             service_key: kp.pk.to_base64(),
+            now: "2026-10-13T09:00:00Z".into(),
         }
     }
 
@@ -964,10 +974,12 @@ Connection: close
             expires_at: Some("2026-10-13T09:10:00Z".into()),
             unlock_count: 1,
             service_key: kp.pk.to_base64(),
+            now: "2026-10-13T09:05:00Z".into(),
         };
         let signed = sign_receipt(&receipt, &kp.sk, &kp.pk).unwrap();
         let back = verify_receipt(&signed, Some(&kp.pk.to_base64())).unwrap();
         assert_eq!(back.unlock_count, 1);
+        assert_eq!(back.now, "2026-10-13T09:05:00Z");
         let mut bad = signed.clone();
         bad.receipt_json = bad
             .receipt_json

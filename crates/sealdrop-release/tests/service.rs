@@ -91,6 +91,7 @@ async fn unlock_window_is_enforced_on_service_clock() {
     let v: Value = r.json();
     assert_eq!(v["first_unlock"], "2026-10-13T09:00:00Z");
     assert_eq!(v["expires_at"], "2026-10-13T09:10:00Z");
+    assert_eq!(v["now"], "2026-10-13T09:00:00Z");
     assert_eq!(
         v["k_release"],
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -102,7 +103,13 @@ async fn unlock_window_is_enforced_on_service_clock() {
         .json(&json!({"unlock_token": unlock_b64}))
         .await;
     assert_eq!(r.status_code(), 200);
-    assert_eq!(r.json::<Value>()["first_unlock"], "2026-10-13T09:00:00Z");
+    let v: Value = r.json();
+    assert_eq!(v["first_unlock"], "2026-10-13T09:00:00Z");
+    // Service clock advances; remaining = expires_at - now.
+    assert_eq!(v["now"], "2026-10-13T09:09:59Z");
+    let now = chrono::DateTime::parse_from_rfc3339(v["now"].as_str().unwrap()).unwrap();
+    let exp = chrono::DateTime::parse_from_rfc3339(v["expires_at"].as_str().unwrap()).unwrap();
+    assert_eq!((exp - now).num_seconds(), 1);
 
     clock.advance_secs(2);
     let r = s
@@ -126,6 +133,8 @@ async fn unlock_window_is_enforced_on_service_clock() {
     let rec = sealdrop_core::release::verify_receipt(&signed, None).unwrap();
     assert_eq!(rec.unlock_count, 2);
     assert_eq!(rec.first_unlock.as_deref(), Some("2026-10-13T09:00:00Z"));
+    // The receipt carries the service clock at issue time (09:00:00 + 599 + 2).
+    assert_eq!(rec.now, "2026-10-13T09:10:01Z");
 }
 
 #[tokio::test]

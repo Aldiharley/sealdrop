@@ -115,6 +115,8 @@ pub struct UnlockResponse {
     k_release: String,
     first_unlock: String,
     expires_at: String,
+    /// Service clock at the moment of this response (RFC 3339 UTC).
+    now: String,
 }
 
 pub async fn unlock(State(st): State<AppState>, Path(id): Path<String>, body: Bytes) -> Response {
@@ -163,6 +165,7 @@ pub async fn unlock(State(st): State<AppState>, Path(id): Path<String>, body: By
         k_release: k,
         first_unlock: first,
         expires_at,
+        now: st.clock.now_rfc3339(),
     })
     .into_response()
 }
@@ -188,6 +191,7 @@ pub async fn receipt(
         expires_at: row.expires_at,
         unlock_count: row.unlock_count as u64,
         service_key: st.signer.pk.to_base64(),
+        now: st.clock.now_rfc3339(),
     };
     match sealdrop_core::release::sign_receipt(&r, &st.signer.sk, &st.signer.pk) {
         Ok(s) => Json(s).into_response(),
