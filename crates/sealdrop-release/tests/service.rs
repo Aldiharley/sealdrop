@@ -171,6 +171,53 @@ async fn rate_limit_returns_429() {
 }
 
 #[tokio::test]
+async fn trust_proxy_rate_limits_per_forwarded_client() {
+    let clock = Arc::new(FixedClock::new("2026-10-13T09:00:00Z"));
+    let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let state = AppState::new(Db::open_memory().unwrap(), clock, kp, 2).trusting_proxy(true);
+    let s = TestServer::new(build(state));
+    let get = |xff: &'static str| {
+        let s = &s;
+        async move {
+            s.get("/healthz")
+                .add_header("x-forwarded-for", xff)
+                .await
+                .status_code()
+        }
+    };
+    // Every request arrives from the same peer (the proxy); each client gets its own bucket.
+    assert_eq!(get("203.0.113.7").await, 200);
+    assert_eq!(get("203.0.113.7, 10.0.0.1").await, 200);
+    assert_eq!(get("203.0.113.7").await, 429);
+    assert_eq!(get("198.51.100.9").await, 200);
+    assert_eq!(get("2001:db8::1").await, 200);
+    // An absent or invalid header falls back to the peer address.
+    assert_eq!(get("not-an-ip").await, 200);
+    assert_eq!(s.get("/healthz").await.status_code(), 200);
+    assert_eq!(s.get("/healthz").await.status_code(), 429);
+}
+
+#[tokio::test]
+async fn without_trust_proxy_forwarded_for_is_ignored() {
+    let clock = Arc::new(FixedClock::new("2026-10-13T09:00:00Z"));
+    let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let s = TestServer::new(build(AppState::new(
+        Db::open_memory().unwrap(),
+        clock,
+        kp,
+        2,
+    )));
+    for (xff, want) in [
+        ("203.0.113.7", 200),
+        ("198.51.100.9", 200),
+        ("192.0.2.1", 429),
+    ] {
+        let r = s.get("/healthz").add_header("x-forwarded-for", xff).await;
+        assert_eq!(r.status_code(), want, "{xff}");
+    }
+}
+
+#[tokio::test]
 async fn oversized_body_is_rejected() {
     let (s, _, _, token) = server();
     let r = s

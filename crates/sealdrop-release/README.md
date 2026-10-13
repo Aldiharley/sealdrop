@@ -35,13 +35,29 @@ release.example.org {
 }
 ```
 
+and run the service with `--trust-proxy`:
+
+```sh
+sealdrop-release serve --trust-proxy --db /var/lib/sealdrop-release/releases.db --dir /var/lib/sealdrop-release
+```
+
+Let Caddy set `X-Forwarded-For` itself: do not configure `trusted_proxies` in front of it, so Caddy
+replaces whatever a client sent with the real client address. With the Docker image, append the full
+command, e.g. `docker run ... sealdrop-release serve --listen 0.0.0.0:8787 --db /data/releases.db --dir /data --trust-proxy`.
+
 ### Rate limiting
 
-The limiter is a per-address token bucket keyed on the TCP peer address. It does not read
-`X-Forwarded-For`, which a client could forge. Behind a reverse proxy the peer address is always the
-proxy, so every client shares one bucket. Set `--rate-capacity` (burst size, default 60) and
-`--rate-refill-per-sec` (default 0.5) for your expected aggregate traffic, or leave them generous and run
-the limiter in the proxy instead.
+The limiter is a per-address token bucket (`--rate-capacity`, burst size, default 60;
+`--rate-refill-per-sec`, default 0.5).
+
+- **Without `--trust-proxy`** (the default) it keys on the TCP peer address and ignores
+  `X-Forwarded-For`, which a client could forge. Behind a reverse proxy the peer is always the proxy, so
+  every client would share one bucket and one busy client could hold the whole service at 429, denying
+  every recipient's unlock.
+- **With `--trust-proxy`** it keys on the first address in `X-Forwarded-For` (falling back to the peer if
+  the header is missing or not an IP address). Use it only when the service is reachable solely through
+  a proxy that sets that header, as in the Caddy example above; if clients can reach the service
+  directly they can choose their own bucket.
 
 ## API
 
@@ -84,3 +100,8 @@ A sweeper runs every minute and removes the release key of every release whose w
 SQLite `secure_delete` is on, so freed pages are overwritten. Release records (without keys) are kept for
 90 days so senders can still fetch receipts, then removed. A deposit that was never unlocked is removed,
 key included, 90 days after it was created. Change the period with `--retention-days` (1 to 3650).
+
+That last rule is a hard deadline for the recipient: a timed package that is never opened stops working
+once its deposit is purged ("release not found"). `sealdrop seal` and the desktop app's Seal screen tell
+the sender so ("If the package is never opened, the service forgets the key after its retention period
+(operator default: 90 days)."); if you change `--retention-days`, tell your senders.

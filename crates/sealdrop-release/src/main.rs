@@ -42,9 +42,15 @@ enum Cmd {
         db: String,
         #[arg(long, default_value = ".")]
         dir: PathBuf,
-        /// Burst size of the per-address rate limiter (the limiter keys on the TCP peer address)
+        /// Burst size of the per-address rate limiter (keyed on the TCP peer address, or on
+        /// the client address from X-Forwarded-For with --trust-proxy)
         #[arg(long, default_value_t = 60)]
         rate_capacity: u32,
+        /// Behind a reverse proxy: rate-limit on the first X-Forwarded-For address. Only set
+        /// this when the proxy (e.g. Caddy) sets that header itself; otherwise every client
+        /// shares the proxy's bucket
+        #[arg(long)]
+        trust_proxy: bool,
         /// Requests per second the rate limiter refills per address
         #[arg(long, default_value_t = sealdrop_release::app::DEFAULT_REFILL_PER_SEC, value_parser = parse_refill)]
         rate_refill_per_sec: f64,
@@ -134,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
             rate_capacity,
             rate_refill_per_sec,
             retention_days,
+            trust_proxy,
         } => {
             let db = Db::open(&db)?;
             let state = AppState::with_rate(
@@ -142,7 +149,8 @@ async fn main() -> anyhow::Result<()> {
                 load_signer(&dir)?,
                 rate_capacity,
                 rate_refill_per_sec,
-            );
+            )
+            .trusting_proxy(trust_proxy);
             let sweeper = state.clone();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));

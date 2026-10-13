@@ -15,12 +15,29 @@ pub async fn healthz() -> &'static str {
     "ok"
 }
 
+/// The first address in `X-Forwarded-For`, if it parses as an IP address.
+fn forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
+    let v = headers.get("x-forwarded-for")?.to_str().ok()?;
+    v.split(',').next()?.trim().parse().ok()
+}
+
+/// The address the rate limiter keys on: the TCP peer, or with `--trust-proxy` the client
+/// address the proxy put first in `X-Forwarded-For` (the peer if it is absent or invalid).
+pub fn client_ip(trust_proxy: bool, headers: &HeaderMap, peer: Option<IpAddr>) -> IpAddr {
+    let peer = peer.unwrap_or(IpAddr::from([127, 0, 0, 1]));
+    if trust_proxy {
+        forwarded_for(headers).unwrap_or(peer)
+    } else {
+        peer
+    }
+}
+
 pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) -> Response {
-    let ip: IpAddr = req
+    let peer = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip())
-        .unwrap_or(IpAddr::from([127, 0, 0, 1]));
+        .map(|c| c.0.ip());
+    let ip = client_ip(st.trust_proxy, req.headers(), peer);
     if !st.limiter.allow(ip) {
         return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
     }

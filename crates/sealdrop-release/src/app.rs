@@ -16,6 +16,9 @@ pub struct AppState {
     pub clock: Arc<dyn Clock>,
     pub signer: Arc<minisign::KeyPair>,
     pub limiter: Arc<Limiter>,
+    /// Key the rate limiter on the first `X-Forwarded-For` address instead of the TCP peer.
+    /// Only for a deployment behind a reverse proxy that sets that header itself.
+    pub trust_proxy: bool,
 }
 
 impl AppState {
@@ -41,7 +44,15 @@ impl AppState {
             clock,
             signer: Arc::new(signer),
             limiter: Arc::new(Limiter::new(rate_capacity, refill_per_sec)),
+            trust_proxy: false,
         }
+    }
+
+    /// Behind a reverse proxy (`serve --trust-proxy`): rate-limit per client address taken
+    /// from `X-Forwarded-For`, not per proxy connection.
+    pub fn trusting_proxy(mut self, yes: bool) -> Self {
+        self.trust_proxy = yes;
+        self
     }
 }
 
