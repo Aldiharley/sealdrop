@@ -1,5 +1,3 @@
-use std::io::Write;
-
 use sealdrop_core::extract::{extract, ExtractError, Limits};
 use sealdrop_core::pack::{pack, META_PATH};
 use sealdrop_core::Error;
@@ -191,5 +189,130 @@ fn round_trips_a_real_pack_and_refuses_overwrite() {
         other => panic!("{other:?}"),
     }
     extract(&tar[..], out.path(), &Limits::default(), true).unwrap();
-    let _ = std::io::stdout().flush();
+}
+
+#[test]
+fn round_trips_long_names_through_pax_headers() {
+    // Names over 100 bytes make `pack` emit PAX `x` headers; the guard must accept them.
+    let src = tempfile::tempdir().unwrap();
+    let long = format!("{}.txt", "n".repeat(120));
+    std::fs::create_dir_all(src.path().join("proj")).unwrap();
+    std::fs::write(src.path().join("proj").join(&long), b"long").unwrap();
+    let mut tar = Vec::new();
+    pack(&src.path().join("proj"), &mut tar).unwrap();
+
+    let out = tempfile::tempdir().unwrap();
+    let rep = extract(&tar[..], out.path(), &Limits::default(), false).unwrap();
+    assert_eq!(rep.files, 1);
+    assert_eq!(
+        std::fs::read(out.path().join("proj").join(&long)).unwrap(),
+        b"long"
+    );
+}
+
+#[test]
+fn rejects_oversized_extension_header() {
+    let meta = meta_json("r", &[("r/a", b"x")]);
+    // Drop tar_with's end-of-archive blocks so an extension header can follow the meta entry.
+    let mut t = tar_with(&meta, |_| {});
+    t.truncate(t.len() - 1024);
+    // A GNU long-name header declaring 2 MiB, with no payload behind it.
+    let mut h = Header::new_gnu();
+    h.as_old_mut().name[..13].copy_from_slice(b"././@LongLink");
+    h.set_size(2 << 20);
+    h.set_entry_type(EntryType::GNULongName);
+    h.set_cksum();
+    t.extend_from_slice(h.as_bytes());
+    t.extend_from_slice(&[0u8; 1024]);
+    assert!(matches!(
+        expect_extract_err(t),
+        ExtractError::HeaderTooLarge(_)
+    ));
+}
+
+#[test]
+fn rejects_pax_size_override() {
+    // A PAX `size=` record would change the next member's size behind the guard's back.
+    let meta = meta_json("r", &[("r/a", b"x")]);
+    let t = tar_with(&meta, |b| {
+        let pax = b"9 size=5\n";
+        let mut h = Header::new_ustar();
+        h.set_entry_type(EntryType::XHeader);
+        h.set_size(pax.len() as u64);
+        b.append_data(&mut h, "PaxHeader/a", &pax[..]).unwrap();
+    });
+    assert!(matches!(
+        expect_extract_err(t),
+        ExtractError::ForbiddenEntry(_)
+    ));
+}
+
+#[test]
+fn enforces_total_bytes_limit() {
+    let meta = meta_json("r", &[("r/a", b"0123456789"), ("r/b", b"0123456789")]);
+    let t = tar_with(&meta, |b| {
+        add_file(b, "sealdrop/payload/r/a", b"0123456789");
+        add_file(b, "sealdrop/payload/r/b", b"0123456789");
+    });
+    let out = tempfile::tempdir().unwrap();
+    let limits = Limits {
+        max_bytes: 15,
+        ..Limits::default()
+    };
+    match extract(&t[..], out.path(), &limits, false) {
+        Err(Error::Extract(ExtractError::TooManyBytes)) => {}
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn cleans_up_temp_dir_on_failure() {
+    let meta = meta_json("r", &[("r/a", b"good")]);
+    let t = tar_with(&meta, |b| add_file(b, "sealdrop/payload/r/a", b"evil"));
+    let out = tempfile::tempdir().unwrap();
+    match extract(&t[..], out.path(), &Limits::default(), false) {
+        Err(Error::Extract(ExtractError::HashMismatch(_))) => {}
+        other => panic!("{other:?}"),
+    }
+    let names: Vec<String> = std::fs::read_dir(out.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        names.iter().all(|n| !n.starts_with(".sealdrop-")),
+        "leftover temp dir: {names:?}"
+    );
+    assert!(!names.iter().any(|n| n == "r"), "partial root: {names:?}");
+}
+
+#[test]
+fn rejects_wrong_root_and_forbidden_types() {
+    let meta = meta_json("r", &[("r/a", b"x")]);
+    // A member outside the meta root.
+    let t = tar_with(&meta, |b| add_file(b, "sealdrop/payload/other/a", b"x"));
+    assert!(matches!(expect_extract_err(t), ExtractError::WrongRoot(_)));
+    // A hard link.
+    let t = tar_with(&meta, |b| {
+        let mut h = Header::new_gnu();
+        h.set_entry_type(EntryType::Link);
+        h.set_size(0);
+        b.append_link(&mut h, "sealdrop/payload/r/hard", "sealdrop/payload/r/a")
+            .unwrap();
+    });
+    assert!(matches!(
+        expect_extract_err(t),
+        ExtractError::ForbiddenEntry(_)
+    ));
+    // A FIFO.
+    let t = tar_with(&meta, |b| {
+        let mut h = Header::new_gnu();
+        h.set_entry_type(EntryType::Fifo);
+        h.set_size(0);
+        b.append_data(&mut h, "sealdrop/payload/r/fifo", std::io::empty())
+            .unwrap();
+    });
+    assert!(matches!(
+        expect_extract_err(t),
+        ExtractError::ForbiddenEntry(_)
+    ));
 }
