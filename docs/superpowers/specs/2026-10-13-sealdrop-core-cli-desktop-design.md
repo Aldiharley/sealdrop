@@ -132,7 +132,7 @@ before encrypting.
   "signer": "<minisign public key, base64>",
   "classification": "confidential",
   "expires": "2026-12-31",
-  "release": { "service": "https://release.example.org", "release_id": "<uuid v4>", "window_secs": 600 },
+  "release": { "service": "https://release.example.org", "release_id": "<uuid v4>", "window_secs": 600, "service_key": "<minisign pubkey base64, returned by the deposit call; receipts are pinned to it>" },
   "notes": "expires is advisory and is not enforced by any software; release.window_secs is enforced by the named service for the encrypted package only"
 }
 ```
@@ -182,6 +182,9 @@ contains exactly one stanza:
 The unlock token travels in the stanza (not the manifest) so a timed package can be
 opened from the `.age` file alone; the manifest remains optional for `open`.
 
+(age itself appends random `*-grease` stanzas to every non-scrypt header; those are
+not recipients. "Exactly one stanza" means exactly one real recipient stanza.)
+
 Opening therefore requires **both** `K_release` from the service **and** the
 recipient's own key or passphrase. Timed release must be the only recipient
 (label set `{"sealdrop-release"}`); in particular the sender's self-recipient is not
@@ -191,7 +194,11 @@ matching keys", as intended.
 **Deposit (sender, at seal).** `PUT /v1/releases/{release_id}` with
 `{ k_release, window_secs, unlock_token_hash, package_sha256 }`, authenticated by a
 deposit token the service operator issues to senders. `unlock_token` is 32 random
-bytes placed in the stanza; the service stores only its SHA-256.
+bytes placed in the stanza; the service stores only its SHA-256. The service answers
+`201 { "service_key": "<minisign pubkey>" }`; the sender records that key in the
+manifest and later verifies receipts only against it. Before any network call the
+client validates `service` (https only, or http to loopback) and `release_id` (UUID),
+because both come from the file header.
 
 **Unlock (recipient, at open).** `POST /v1/releases/{release_id}/unlock` with
 `{ unlock_token }`. On the first successful call the service records `first_unlock`
