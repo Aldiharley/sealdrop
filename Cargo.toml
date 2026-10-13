@@ -4,6 +4,7 @@ members = [
   "crates/sealdrop-core",
   "crates/sealdrop-release",
   "crates/sealdrop-cli",
+  "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
