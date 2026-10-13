@@ -46,12 +46,14 @@ button, input, select { font: inherit; color: inherit; }
    Task 13 block; everything below only adds classes.
    ================================================================== */
 
-/* ---- Accessibility layer -------------------------------------------
-   Put class "aa" on the .app root (<div class="app aa">). It swaps in
+/* ---- Accessibility layer (mandatory) --------------------------------
+   Put class "aa" on the .app root (<div class="app aa">) and never remove
+   it. It swaps in
    the contrast-safe companions from tokens.css without editing the
    fixed rules above: ink text on accents (never white), muted text that
    reaches 4.5:1, error text that reaches 4.5:1, and a 3:1 focus ring.
-   Remove the class and the app renders exactly the fixed block. */
+   Without the class the app renders exactly the fixed block, which has
+   white text on accents (2.0:1 and 2.5:1) and is a defect. */
 .aa .label, .aa .note, .aa .muted { color: var(--muted-ac); }
 .aa .err { color: var(--danger-ac); }
 .aa .neu-chip { color: var(--ink); }
@@ -63,6 +65,10 @@ button, input, select { font: inherit; color: inherit; }
 .neu-toggle:focus-visible, .neu-nav__item:focus-visible, .neu-drop:focus-visible,
 .seg__item:focus-visible, .link-btn:focus-visible, .neu-chip__x:focus-visible { outline: var(--focus-ring); outline-offset: 3px; }
 .neu-toggle:disabled { opacity: .5; cursor: not-allowed; }
+/* Unavailable controls use aria-disabled (focusable, reason linked by aria-describedby) */
+[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.neu-btn[aria-disabled="true"]:active { transform: none; box-shadow: 6px 6px 14px var(--shadow-dark), -6px -6px 14px var(--shadow-light); }
+.seg__item[aria-disabled="true"] { cursor: not-allowed; }
 .neu-inset[aria-invalid="true"] { box-shadow: inset 4px 4px 10px var(--shadow-dark), inset -4px -4px 10px var(--shadow-light), 0 0 0 2px var(--danger-ac); }
 .neu-inset::placeholder { color: var(--muted-ac); opacity: 1; }
 .neu-inset:disabled, .neu-inset[readonly] { color: var(--ink); }
@@ -87,6 +93,7 @@ button, input, select { font: inherit; color: inherit; }
 .h2 { font-size: var(--fs-h2); line-height: 28px; font-weight: 700; margin: 0; }
 .lead { font-size: var(--fs-lead); line-height: 24px; font-weight: 700; margin: 0; }
 .mono { font-family: var(--font-mono); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.neu-nav__item[aria-current="page"] + .nav-label { font-weight: 700; }
 .nav-label { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--ink); text-align: center; margin-top: 6px; }
 
 /* ---- Nav extras -------------------------------------------------- */
@@ -168,7 +175,13 @@ button, input, select { font: inherit; color: inherit; }
 /* ---- QR (always dark modules on white, with a 4-module quiet zone) - */
 .qr { background: #fff; padding: 12px; border-radius: var(--radius-field); width: max-content; line-height: 0;
   box-shadow: inset 3px 3px 7px var(--shadow-dark), inset -3px -3px 7px var(--shadow-light); }
-.qr svg { display: block; width: 168px; height: 168px; }
+.qr svg, .qr canvas { display: block; width: 168px; height: 168px; }
+.qr canvas { image-rendering: pixelated; }
+
+/* ---- Generated passphrase (Seal success). Put it on a .neu-inset block. */
+.passphrase { font-size: 28px; font-weight: 700; letter-spacing: .01em; line-height: 1.4; color: var(--ink);
+  user-select: text; overflow-wrap: anywhere; padding: 16px 20px; }
+.passphrase__sep { padding: 0 .35em; font-weight: 400; }
 
 /* ---- Drop zone content ------------------------------------------- */
 .drop__inner { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; }

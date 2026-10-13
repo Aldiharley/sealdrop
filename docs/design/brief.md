@@ -9,7 +9,7 @@ Files this brief ships with:
 - Reference images (style only, not layout): `docs/design/reference/reference-1.jpg`, `reference-2.jpg`.
 - Source of truth for behaviour: `docs/superpowers/specs/2026-10-13-sealdrop-core-cli-desktop-design.md` section 9 (desktop app) and 5.5 (timed release). If this brief and the spec disagree, the spec wins; say so in the PR.
 
-How to read it: section 1 is the visual system, section 2 defines the nine primitives, section 3 is the shell shared by all screens, sections 4 to 8 are the five screens (wireframe, components, copy, states, accessibility), section 9 is the global accessibility rules, section 10 is "what the app must never do", section 11 lists backend gaps Task 15 has to settle.
+How to read it: section 1 is the visual system, section 2 defines the nine primitives, section 3 is the shell shared by all screens, sections 4 to 8 are the five screens (wireframe, components, copy, states, accessibility), section 9 is the global accessibility rules, section 10 is "what the app must never do", section 11 is the fixed backend contract: the Tauri commands the screens call and what they return.
 
 Tone of the product: a quiet security tool. Whimsy lives in the shapes (soft tiles, round pills, a pastel palette), never in the copy. Sentence case, second person, no exclamation marks, no emoji, no jokes, no words like "secure", "safe", "unbreakable" or "guaranteed".
 
@@ -50,7 +50,7 @@ All ratios are WCAG 2.x relative luminance, measured against the surface the col
 | `--danger-ac` | `#A8444A` | Error text (added) | 4.9:1 on `--bg` |
 | `--danger-tint` | `#F2D3D4` | Error badge and error notice background (added) | ink on it 8.0:1 |
 
-White-text rule, stated once: white text on pink or blue (or sage) is used nowhere in sealdrop. The fixed CSS defaults `.neu-btn--primary`, `.neu-btn--pink` and `.neu-chip` to white text, which is 2.0:1 on pink and 2.5:1 on blue. To avoid editing the fixed block, `neu.css` adds an opt-in layer: put `class="app aa"` on the root. Under `.aa`, chips, primary and pink buttons use `--ink`, primary and blue chips switch to `--blue-ac`, muted text uses `--muted-ac`, error text uses `--danger-ac`, and the focus ring is 3.05:1. Task 15 must set `aa` on the root and must not remove it. If you ever render without `aa`, white text on an accent is a defect.
+White-text rule, stated once: white text on pink or blue (or sage) is used nowhere in sealdrop. The fixed CSS defaults `.neu-btn--primary`, `.neu-btn--pink` and `.neu-chip` to white text, which is 2.0:1 on pink and 2.5:1 on blue. To avoid editing the fixed block, `neu.css` adds a mandatory layer: put `class="app aa"` on the root. Under `.aa`, chips, primary and pink buttons use `--ink`, primary and blue chips switch to `--blue-ac`, muted text uses `--muted-ac`, error text uses `--danger-ac`, and the focus ring is 3.05:1. Task 15 must set `aa` on the root and must not remove it. If you ever render without `aa`, white text on an accent is a defect.
 
 Body text is always `--ink`. Pink and blue appear as fills, glyph colours and rings, never as text colour.
 
@@ -179,11 +179,23 @@ Only these nine primitives exist. Every screen below is composed from them. A va
 | **Tile** | `section.neu-tile[aria-labelledby]` | `tile` default. `well` (a `.neu-inset` block with padding 16 for read-only values and result lists). `banner` (`.banner`, cream, full width). `notice` (`.notice`, `--err`, `--ok`; inline message inside a tile). `dialog` (`.neu-tile.dialog` inside `.scrim`). `row` (`.list__row`, an inset row inside a list). | Tile title is `<h2 class="label">`. Tiles are landmarks only when they hold a form; otherwise plain `section`. |
 | **Pill** | `.neu-pill` | `status` (dot + text, for example "Identity ready"). `seg` (`.seg` radiogroup of `.seg__item[role="radio"]`). `progress` (`.progress` track + `.progress__bar`, `role="progressbar"`). `toggle-label` (a plain row, see Toggle). | Status pills are not interactive. Segments are one tab stop; arrow keys move and select. |
 | **Chip** | `.neu-chip` | `pink` (standard recipient), `blue` (post-quantum recipient), `sage` (plugin recipient), `cream` (word, advisory, "Non-standard"), `word` (`.neu-chip--word`), `removable` (chip + `.neu-chip__x`), `status` (`.badge` with `--ok`, `--warn`, `--err`, `--info`; always glyph + word). | Chip text is `--ink` under `.aa`. Removable chip's button has `aria-label="Remove recipient [short form]"`. |
-| **SoftButton** | `button.neu-btn` | default (neutral), `--primary` (blue-ac, one per screen: the main action), `--pink` (attention or destructive: Replace identity, Skip verification), `--sm` (14 px, copy buttons and inline actions), `--block` (full width), `link` (`.link-btn`, underlined text button for Show, Hide, Remove, Clear, disclosures). | Disabled buttons stay in the tab order only if they have an explanation (`aria-describedby` pointing at the reason text); otherwise native `disabled`. |
-| **Toggle** | `.toggle-row` > `button.neu-toggle[role="switch"][aria-checked]` + `.toggle-row__text` + `.toggle-row__state` | `with-note` (row plus `.field__helper` underneath, linked by `aria-describedby`). `disabled` (opacity .5, `disabled`). | Always `role="switch"` with `aria-checked="true|false"`, labelled by the row text via `aria-labelledby`. Visible "On" / "Off" text in `.toggle-row__state`. Space and Enter toggle. The whole row is at least 44 px high; clicking the label text toggles too. |
+| **SoftButton** | `button.neu-btn` | default (neutral), `--primary` (blue-ac, one per screen: the main action), `--pink` (attention or destructive: Replace identity, Skip verification), `--sm` (14 px, copy buttons and inline actions), `--block` (full width), `link` (`.link-btn`, underlined text button for Show, Hide, Remove, Clear, disclosures). | Unavailable buttons use `aria-disabled="true"`, not native `disabled`, so they stay focusable and their reason text (linked with `aria-describedby`) can be read; the click handler ignores them. See the rule under this table. |
+| **Toggle** | `.toggle-row` > `button.neu-toggle[role="switch"][aria-checked]` + `.toggle-row__text` + `.toggle-row__state` | `with-note` (row plus `.field__helper` underneath, linked by `aria-describedby`). `unavailable` (`aria-disabled="true"`, opacity .5, ignores activation). | Always `role="switch"` with `aria-checked="true|false"`, labelled by the row text via `aria-labelledby`. Visible "On" / "Off" text in `.toggle-row__state`. Space and Enter toggle. The whole row is at least 44 px high; clicking the label text toggles too. |
 | **Field** | `.field` > `label.label` + `.neu-inset` + `.field__helper` + `.field__error` | `text`, `password` (input + "Show" / "Hide" link button, `aria-pressed`), `number+unit` (`.field__row`: number input + `select.neu-inset.field__unit`), `path` (readonly input + "Choose…" button), `value` (readonly `textarea.neu-inset.mono`, `rows="2"`, for recipient string, signer key, hash; with a Copy button), `date` (text input, `YYYY-MM-DD`), `disclosure` (a `link-btn` with `aria-expanded` that shows more fields). | Label is always visible and associated (`for`/`id`). Helper and error are linked with `aria-describedby`. Invalid: `aria-invalid="true"` (adds a 2 px `--danger-ac` ring) and the message in `.field__error`. Errors appear on blur or on submit, not while typing the first time. Placeholders are examples, never instructions that disappear. |
-| **DropZone** | `.neu-drop` (200 px) or `.neu-drop.neu-drop--sm` (120 px) with `.drop__inner` | `idle`, `active` (`data-active="true"` while a file is dragged over: dashed blue outline inside), `loaded` (replaced by a summary row in the same tile), `error` (inline `.field__error` under it). | `role="group"` with an `aria-label`. It is not a tab stop. Keyboard alternative: the "Choose file…" and "Choose folder…" (or "Choose package…") SoftButtons inside it, which open the native dialog. Drag-and-drop gives the path to Rust; the WebView never reads the file. |
+| **DropZone** | `.neu-drop` (200 px) or `.neu-drop.neu-drop--sm` (120 px) with `.drop__inner` | `idle`, `active` (`data-active="true"` while a file is dragged over: dashed blue outline inside), `loaded` (the zone shows the chosen item inside itself: glyph, name, path; the Choose buttons stay so the item can be replaced), `error` (inline `.field__error` under it). | `role="group"` with an `aria-label`. It is not a tab stop. Keyboard alternative: the "Choose file…" and "Choose folder…" (or "Choose package…") SoftButtons inside it, which open the native dialog. Drag-and-drop gives the path to Rust; the WebView never reads the file. |
 | **Countdown** | `.countdown[role="timer"]` > label text + `.countdown__time` | `running` (sage slab), `low` (pink slab, 25% of the window or less, or under 60 s), `expired` (inset slab with the word "expired"), `waiting` (cream slab, "not opened yet", used in Keys receipts). | Text always carries the meaning ("expires in 9 m 41 s", "expired"). Not announced every second; see the Open screen. Driven by the service clock, never a local deadline (section 5.4). |
+
+**Unavailable controls (one rule).** Buttons, toggles and segment options that cannot be used right now carry `aria-disabled="true"` (neu.css dims them to .5 and removes the press effect). They stay in the tab order and the reason is in text linked by `aria-describedby`. Native `disabled` is used only for text inputs and selects while an operation is working. Never hide a control instead of explaining it.
+
+**Attribute reference for the stateful primitives.**
+
+| Primitive | Markup |
+|---|---|
+| Countdown | `<div class="countdown" role="timer" aria-label="Time left" data-state="low"><span class="label">expires in</span><span class="countdown__time">9 m 41 s</span></div>`. `data-state` is one of `low` (25% of the window or less, or under 60 s), `expired`, `waiting`; no attribute means running (sage slab). |
+| Progress, determinate | `<div class="progress" role="progressbar" aria-label="Sealing" aria-valuemin="0" aria-valuemax="100" aria-valuenow="40" style="--p:40%"><div class="progress__bar"></div></div>`; the bar width is the CSS variable `--p`, keep it in sync with `aria-valuenow`. |
+| Progress, indeterminate | Same element with `data-indeterminate="true"`, no `aria-valuenow` and no `--p`. The phase text beside it is the accessible name of the activity. |
+| Segmented | `<div class="seg" role="radiogroup" aria-label="Delivery method"><button class="seg__item" role="radio" aria-checked="true">…</button>…</div>` |
+| Nav current item | `aria-current="page"` on `.neu-nav__item`; its `.nav-label` becomes weight 700 (rule in neu.css). |
 
 Text formats used everywhere: dates as `13 Oct 09:12 UTC` (add the year when it is not the current year: `13 Oct 2026 09:12 UTC`); sizes with one decimal (`48.2 MB`, `2 KB`); durations as `[n] seconds|minutes|hours|days` in sentences (singular for 1: `1 hour`) and compact `9 m 41 s`, `2 h 05 m`, `3 d 4 h`, `41 s` in the countdown.
 
@@ -241,7 +253,9 @@ Shown on Seal, Open, Verify and Settings while there is no identity. Not shown o
 | Button (SoftButton, default) | Go to Keys |
 | Accessibility | `role="region"` `aria-label="First run"`; text is in `--ink` on cream (9.1:1). The button moves to Keys and focuses "Create identity". The banner disappears the moment an identity exists, without a page reload. |
 
-Without an identity: Seal's primary action is disabled with the reason "Create your identity in Keys first." Open can still open passphrase packages; for a package that needs an identity key it shows "This package needs your identity key, and you haven't created one yet. Create one in Keys." Verify works fully.
+The banner (about 72 px with its margin) pushes the content down, so at 760 px the primary action of a screen may need a scroll while the banner is showing.
+
+Without an identity: Seal's primary action is `aria-disabled` with the reason "Create your identity in Keys first." Open can still open passphrase packages; for a package that needs an identity key it shows "This package needs your identity key, and you haven't created one yet. Create one in Keys." Verify works fully.
 
 ### 3.4 Shared message copy
 
@@ -262,7 +276,7 @@ Never auto-dismiss an error. Errors stay until the user changes the input or pre
 
 Purpose: pick a file or folder, choose who can open it (recipients or a generated passphrase), optionally add timed release and details, and write the three delivery files.
 
-### 4.1 Wireframe (idle, recipients mode, timed release on)
+### 4.1 Wireframe (a chosen folder, hardware-only recipients, timed release on)
 
 ```
 
@@ -273,34 +287,34 @@ Purpose: pick a file or folder, choose who can open it (recipients or a generate
   ┌╌╌╌╌╌┐    │ WHAT TO SEND                                        │ │ TIMED RELEASE                   [=o] │
   ┆ [@] ┆    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │                                      │
   └╌╌╌╌╌┘    │ ┆                [ folder glyph ]                 ┆ │ │ ┌╌╌╌╌╌╌╌╌┐  ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-   Seal      │ ┆                                                 ┆ │ │ ┆ 10     ┆  ┆ minutes           v  ┆ │
-             │ ┆           Drop a file or folder here            ┆ │ │ └╌╌╌╌╌╌╌╌┘  └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
+   Seal      │ ┆                    report-q3                    ┆ │ │ ┆ 10     ┆  ┆ minutes           v  ┆ │
+             │ ┆        C:\Users\you\Documents\report-q3         ┆ │ │ └╌╌╌╌╌╌╌╌┘  └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
   ╭─────╮    │ ┆                                                 ┆ │ │                                      │
-  │ [v] │    │ ┆    ( Choose file... )  ( Choose folder... )     ┆ │ │ The recipient can open this only     │
+  │ [v] │    │ ┆( Choose file... ) ( Choose folder... ) ( Clear )┆ │ │ The recipient can open this only     │
   ╰─────╯    │ ┆                                                 ┆ │ │ within 10 minutes after they first   │
    Open      │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ open it. This does not protect the   │
-             │                                                     │ │ contents once decrypted.             │
-  ╭─────╮    │ ‹ report-q3/ · 12 files · 48.2 MB ›   ( Clear )     │ │ Service: release.example.org         │
-  │ [/] │    │                                                     │ ╰──────────────────────────────────────╯
-  ╰─────╯    ╰─────────────────────────────────────────────────────╯ ╭──────────────────────────────────────╮
-  Verify     ╭─────────────────────────────────────────────────────╮ │ Details (optional)                v  │
-             │ WHO CAN OPEN IT                                     │ │ Classification, advisory date, armor │
-  ╭─────╮    │ { To recipients }  ( With a passphrase )            │ │                                      │
-  │[o-] │    │                                                     │ ╰──────────────────────────────────────╯
-  ╰─────╯    │ RECIPIENTS                                          │ ╭──────────────────────────────────────╮
-   Keys      │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐           │ │ SAVE TO                              │
-             │ ┆ Paste a recipient (age1...)           ┆  ( Add )  │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘           │ │ ┆ Documents (next to the source)   ┆ │
+             ╰─────────────────────────────────────────────────────╯ │ contents once decrypted.             │
+  ╭─────╮    ╭─────────────────────────────────────────────────────╮ │ Release service: release.example.org │
+  │ [/] │    │ WHO CAN OPEN IT                                     │ ╰──────────────────────────────────────╯
+  ╰─────╯    │ { To recipients }  ( With a passphrase )            │ ╭──────────────────────────────────────╮
+  Verify     │                                                     │ │ Details (optional)                v  │
+             │ RECIPIENTS                                          │ │ Classification, advisory date, armor │
+  ╭─────╮    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐           │ │                                      │
+  │[o-] │    │ ┆ Paste a recipient (age1...)           ┆  ( Add )  │ ╰──────────────────────────────────────╯
+  ╰─────╯    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘           │ ╭──────────────────────────────────────╮
+   Keys      │                                                     │ │ SAVE TO                              │
+             │ ‹ yubikey · age1yubikey1...c8  x ›                  │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+             │ ‹ tpm · age1tpm1...q2  x ›                          │ │ ┆ Documents (next to the source)   ┆ │
              │                                                     │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
-             │ ‹ age1qx7k...f3k2  x ›  ‹ age1pq...9d4m  x ›        │ │ ( Choose... )                        │
-             │ ‹ yubikey: age1yubikey1...c8  x ›                   │ │                                      │
-             │                                                     │ │ Ready when you are.                  │
-             │ [=o]  Also encrypt to me                            │ │                                      │
-  ╭─────╮    │       Keeps a copy you can reopen.                  │ │                                      │
-  │ [=] │    │                                                     │ │                                      │
-  ╰─────╯    │ Each recipient opens it with their own key.         │ │ [[              Seal              ]] │
- Settings    │ 3 recipients, plus you.                             │ │                                      │
-             │                                                     │ │                                      │
+             │ [o=]  Also encrypt to me   (disabled)               │ │ ( Choose... )                        │
+             │       Not added to a timed release package, because │ │                                      │
+             │       it would bypass the release service.          │ │ Accept the unrecoverable-package     │
+             │                                                     │ │ warning or add a second recipient.   │
+  ╭─────╮    │ (!)  Hardware keys can't be backed up. If the       │ │                                      │
+  │ [=] │    │      key is lost or broken, this package can        │ │                                      │
+  ╰─────╯    │      never be opened.                               │ │ [[              Seal              ]] │
+ Settings    │ [o=]  I accept this package may become              │ │                                      │
+             │       unrecoverable                                 │ │                                      │
              ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
  sealdrop 0.2
 ```
@@ -311,8 +325,8 @@ Grid: left `.span-7` = tiles A ("What to send") and B ("Who can open it"); right
 
 | Tile | Primitives |
 |---|---|
-| A What to send | Tile, DropZone (large), 2 x SoftButton ("Choose file…", "Choose folder…"), Chip (selected item, cream) + SoftButton link "Clear" |
-| B Who can open it | Tile, Pill `seg` (To recipients / With a passphrase). Recipients mode: Field text + SoftButton "Add", Chip list (removable pink / blue / sage), Toggle "Also encrypt to me", Tile `notice` (hardware-only) + Toggle "I accept this package may become unrecoverable". Passphrase mode: Pill `seg` x2 (word list, key strength), Field number (word count), Chip cream ("Argon2id (non-standard)", only when enabled in Settings) |
+| A What to send | Tile, DropZone (large; `loaded` variant once an item is chosen: glyph, name, path), 2 x SoftButton ("Choose file…", "Choose folder…"), SoftButton link "Clear" |
+| B Who can open it | Tile, Pill `seg` (To recipients / With a passphrase). Recipients mode: Field text + SoftButton "Add", Chip list (removable; pink x25519, blue post-quantum, sage `plugin:*`), Toggle "Also encrypt to me" (unavailable in timed release), Tile `notice` (hardware-only) + Toggle "I accept this package may become unrecoverable". Passphrase mode: Pill `seg` x2 (word list, key strength), Field number (word count), Chip cream ("Argon2id (non-standard)", only when enabled in Settings) |
 | C Timed release | Tile, Toggle, Field number+unit, sentence (text), service line + SoftButton link |
 | D Details | Tile, Field disclosure; revealed: Field text (classification), Field date (advisory expiry), Toggle (ASCII armor) |
 | E Save to | Tile, Field path + SoftButton "Choose…", Pill `progress`, status text, SoftButton primary "Seal" |
@@ -331,11 +345,9 @@ Header: title "Seal"; subtitle "Lock a file or folder, sign it, and get a delive
 | DropZone connector | or |
 | Buttons | Choose file… / Choose folder… |
 | DropZone (drag over) | Release to add |
-| Scanning | Reading [name]… |
-| Selected chip | [name] · [n] files · [size] (a single file reads `[name] · [size]`) |
+| Loaded zone | glyph, `[name]` (weight 700), full path in mono. No file count or size: the Seal input is not pre-scanned. |
 | Clear (link) | Clear |
 | Several items dropped | Seal one item at a time. Put several files in a folder first. |
-| Empty folder | That folder is empty. There is nothing to seal. |
 | Unreadable | sealdrop can't read that. Check that it still exists and that you can open it. |
 
 **B. Who can open it** (segment label for assistive tech: "Delivery method")
@@ -353,15 +365,15 @@ Header: title "Seal"; subtitle "Lock a file or folder, sign it, and get a delive
 | Chip remove (`aria-label`) | Remove recipient [short form] |
 | Count line, none | No recipients yet. Add at least one, or choose a passphrase. |
 | Count line | 1 recipient. / 3 recipients. / 3 recipients, plus you. |
-| Toggle (default on, from Settings) | Also encrypt to me |
+| Toggle (default on) | Also encrypt to me |
 | Toggle helper | Keeps a copy you can reopen with your own key. |
-| Toggle, disabled in timed release | (same label, off, disabled) helper: Not added to a timed release package, because it would bypass the release service. |
+| Toggle, disabled in timed release | (same label, off, `aria-disabled`) helper: Not added to a timed release package, because it would bypass the release service. |
 | Hardware-only notice (`notice`, warning glyph) | Hardware keys can't be backed up. If the key is lost or broken, this package can never be opened. |
 | Hardware-only toggle | I accept this package may become unrecoverable |
 | Hardware-only helper | Or add a second recipient that you can recover. |
-| Error: not a recipient | That isn't a valid recipient. Recipients start with age1, age1pq, or age1 followed by a plugin name. |
-| Error: plugin not allowed | The plugin “[name]” isn't supported. Supported plugins: yubikey, fido2prf, se, tpm. |
-| Error: plugin missing | age-plugin-[name] wasn't found on this computer, so sealdrop can't use that key. |
+| Hardware-only rule (not copy) | The notice shows when every added recipient has `kind` starting with `plugin:` and "Also encrypt to me" is off (your own key counts as the recovery recipient). In timed release that toggle is unavailable, so a hardware-only set always needs the tick or a second non-plugin recipient. Until one of those holds, Seal is `aria-disabled` with the reason "Accept the unrecoverable-package warning or add a second recipient." The tick maps to `allow_unrecoverable`. |
+| Error: not a recipient (`parse_recipient` fails) | Not a recipient string |
+| Error: plugin not allowed (`allowed=false`) | Plugin [name] is not on the allow-list |
 | Error: duplicate | That recipient is already in the list. |
 
 Passphrase mode (the recipients area is replaced; the recipient list is kept in state, not shown):
@@ -379,7 +391,8 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Error | Use at least 6 words. / Use at least 10 words. |
 | Segment label | Key strength |
 | Segment | Standard / High (slower) |
-| Helper | High takes noticeably longer when sealing and when opening. |
+| Helper (scrypt) | High takes noticeably longer when sealing and when opening. |
+| Helper (Argon2id) | High needs about 2 GiB of free memory to open. (Standard uses the compat profile, 256 MiB.) |
 | Chip (only if Argon2id is on in Settings) | Argon2id (non-standard) |
 | Note next to chip | Stock age tools can't open this package. Change this in Settings. (link-btn "Settings") |
 | Error (policy) | A passphrase works alone. Switch to recipients, or remove them. |
@@ -397,7 +410,7 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Helper | The window starts when the recipient first opens the package. |
 | Fixed sentence (verbatim; fill `[window]` live, for example `10 minutes`, `1 hour`, `3 days`; role `status`, updates as the user types) | The recipient can open this only within [window] after they first open it. This does not protect the contents once decrypted. |
 | Service line | Release service: [host] (link-btn "Change in Settings") |
-| Not configured (`notice`, warning; toggle disabled) | No release service is set up. Add one in Settings to use timed release. (button "Open Settings") |
+| Not configured (`notice`, warning; toggle `aria-disabled`) | No release service is set up. Add one in Settings to use timed release. (button "Open Settings") |
 | No token | The release service needs a deposit token. Add it in Settings. |
 | Error: window | Enter a whole number of at least 1. |
 
@@ -428,7 +441,7 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Button, working | Sealing… |
 | Why disabled (text under the button, linked with `aria-describedby`; show the first unmet one) | Choose something to send. / Add a recipient or choose a passphrase. / Create your identity in Keys first. / Set up the release service in Settings first. / Accept the unrecoverable-package warning or add a second recipient. |
 | Idle status (nothing missing) | Ready when you are. |
-| Progress phases (aria-live polite, one at a time) | Packing [n] files… / Encrypting… / Signing… / Placing the key with the release service… (timed only) / Writing the delivery record… |
+| Progress phases (aria-live polite, one at a time; map `progress` events: `packing`, `encrypted`, `contacting`, `done`) | `packing`: Packing and encrypting… / `encrypted`: Signing and writing the delivery record… / `contacting` (timed only): Placing the key with the release service… / `done`: success state |
 
 **Success state**
 
@@ -444,12 +457,12 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Added line, Argon2id | Packages made with Argon2id open only in sealdrop. |
 | Added line, timed | Packages with timed release open only in sealdrop. |
 | Passphrase tile title | Passphrase, shown once |
-| Passphrase words | each word in a `Chip--word`, in a list (`<ol>` with `aria-label="Passphrase words"`) |
-| Strength line | [n] words · about [bits] bits |
-| QR | 168 px, dark modules on white with a 4-module quiet zone, `aria-hidden` (the word list is the accessible version). Caption: Scan to read the passphrase. |
-| Buttons | Copy / Hide |
+| Passphrase words | one `.neu-inset.passphrase` block (28 px, weight 700, letter-spacing .01em, line-height 1.4), words separated by a visible middle dot (`<span class="passphrase__sep" aria-hidden="true"> · </span>` between words, with a real space in the text so a screen reader and Copy see plain words), wrapping at the separators; selectable text; `aria-label="Passphrase"` |
+| Entropy line (exact format, bits to one decimal) | [bits] bits — send it on a different channel (for example `77.5 bits — send it on a different channel`) |
+| QR | Rendered client-side from the words with the `qrcode` npm package into a 168 px `<canvas>` inside `.qr` (dark modules on white, 4-module quiet zone), `aria-hidden`; the word block is the accessible version. Caption: Scan to read the passphrase. |
+| Buttons | Copy (copies the words separated by single spaces) / Hide |
 | After Copy | Copied. Clear your clipboard once you have shared it. |
-| Note | Shown once and not saved anywhere. Anyone with this passphrase and the package can open it. |
+| Note (shown once per seal; navigating away clears it) | Shown once and not saved anywhere. Anyone with this passphrase and the package can open it. |
 | Auto-clear note | Clears when you leave this screen. |
 | After Hide (replaces the tile) | Passphrase hidden. It can't be shown again. If you haven't shared it, seal the file again. |
 | Timed tile title | Timed release |
@@ -465,6 +478,8 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Service address not allowed | The release service address must start with https:// (http:// is allowed only for this computer). |
 | Policy refused (exit 3) | sealdrop refused to seal this: [policy reason]. |
 | Hardware-only | Hardware keys alone can't be recovered. Add a second recipient or accept the warning. |
+| Plugin binary missing (only knowable at seal time) | age-plugin-[name] wasn't found on this computer, so sealdrop can't use that key. |
+| Empty folder | That folder is empty. There is nothing to seal. |
 | Anything else | Couldn't seal: [reason]. No package was kept. |
 | Button | Try again (SoftButton default) |
 
@@ -472,9 +487,9 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 
 | State | What changes visually |
 |---|---|
-| Idle | Drop zone inset and empty; chips and fields as entered; Seal is raised blue-ac but `disabled` (opacity .5) with the reason text beneath until every requirement is met. Timed tile shows "Off" text when the toggle is off. |
+| Idle | Drop zone inset (empty, or showing the chosen item); chips and fields as entered; Seal is raised blue-ac but `aria-disabled="true"` (opacity .5) with the reason text beneath until every requirement is met. Timed tile shows "Off" text when the toggle is off. |
 | Dragging | Drop zone gets `data-active="true"` (dashed blue-deep outline 12 px inside) and the headline reads "Release to add". |
-| Working | Every input in tiles A to E is `disabled`; Seal reads "Sealing…" and is disabled; a `progress` pill appears above the button (determinate when the core reports bytes, otherwise `data-indeterminate="true"`) with the phase text under it. No cancel in 0.2. |
+| Working | Text inputs and selects in tiles A to E are natively `disabled`; buttons, toggles and segments are `aria-disabled="true"`; Seal reads "Sealing…"; a `progress` pill appears above the button (determinate when the core reports bytes, otherwise `data-indeterminate="true"`) with the phase text under it. No cancel in 0.2. |
 | Success | Left column swaps to the "Sealed" tile and "Sending it"; the passphrase tile (passphrase mode) takes the right column; the timed tile is added when relevant. Focus moves to the "Sealed." heading (`tabindex="-1"`). "Seal another" resets everything, including clearing the passphrase from memory. |
 | Error | `notice--err` above the button; inputs re-enabled; the relevant field has a danger-ac ring and `field__error`. The user's input is kept. |
 
@@ -514,7 +529,7 @@ Purpose: choose a package, see its signed delivery record, unlock it (passphrase
    Open      │                                                     │ │ package only; nothing can recall a   │
              │                                                     │ │ file after it has been decrypted.    │
   ╭─────╮    │                                                     │ │                                      │
-  │ [/] │    ╰─────────────────────────────────────────────────────╯ │ Contacts release.example.org once.   │
+  │ [/] │    ╰─────────────────────────────────────────────────────╯ │ Opening it contacts [host].          │
   ╰─────╯    ╭─────────────────────────────────────────────────────╮ │                                      │
   Verify     │ DELIVERY RECORD                                     │ ╰──────────────────────────────────────╯
              │                                                     │ ╭──────────────────────────────────────╮
@@ -524,15 +539,15 @@ Purpose: choose a package, see its signed delivery record, unlock it (passphrase
    Keys      │                                                     │ │ No passphrase needed.                │
              │ Package id      3f2a91c0-...-b71e                   │ ╰──────────────────────────────────────╯
              │ Sealed with     sealdrop 0.2.0                      │ ╭──────────────────────────────────────╮
-             │ Opens with      your key (1 of 1 recipients)        │ │ RESTORE INTO                         │
-             │                                                     │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-             │ Expected signer (optional)                          │ │ ┆ Temporary folder                 ┆ │
-             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
-             │ ┆ Paste a signer key (starts with RWQ)            ┆ │ │ ( Save to... )                       │
-  ╭─────╮    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ Deleted when you close sealdrop      │
-  │ [=] │    │                                                     │ │ unless you choose a folder.          │
-  ╰─────╯    │ v  More options                                     │ │                                      │
- Settings    │                                                     │ │ [[ Open and start the clock ]]       │
+             │ Opens with      your identity key, once the release │ │ RESTORE INTO                         │
+             │                 service allows it                   │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+             │                                                     │ │ ┆ Temporary folder                 ┆ │
+             │ Expected signer (optional)                          │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
+             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ ( Save to... )                       │
+  ╭─────╮    │ ┆ Paste a signer key (starts with RWQ)            ┆ │ │ Deleted when you close sealdrop      │
+  │ [=] │    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ unless you choose a folder.          │
+  ╰─────╯    │                                                     │ │                                      │
+ Settings    │ v  More options                                     │ │ [[ Open and start the clock ]]       │
              │                                                     │ │                                      │
              ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
  sealdrop 0.2
@@ -642,7 +657,7 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 | Tile title | Timed package |
 | Paragraph 1 | This package expires [window] after first open (service clock). The window starts the first time anyone opens it. |
 | Paragraph 2 (verbatim) | Expiry applies to the encrypted package only; nothing can recall a file after it has been decrypted. |
-| Paragraph 3 | Opening it contacts [host] once. |
+| Paragraph 3 (the service named inside the package; the tile is visible before the call) | Opening it contacts [host]. |
 
 **Unlock**
 
@@ -666,11 +681,12 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 | Path default, timed package | Temporary folder |
 | Buttons | Choose… (normal) / Save to… (timed) |
 | Helper, timed | Deleted when you close sealdrop, unless you choose a folder. |
+| Helper, Save to… | Saving to a folder unlocks the package a second time, inside the window. |
 | Primary button, normal | Open |
 | Primary button, timed | Open and start the clock |
 | Primary button, working | Opening… |
 | Why disabled | Choose a package first. / Enter the passphrase. / Trust the signer or enter their key first. / Create your identity in Keys first. |
-| Progress phases | Verifying… / Contacting [host]… / Decrypting… / Restoring [n] files… |
+| Progress phases (map `progress` events: `verifying`, `contacting`, `extracting`, `done`) | `verifying`: Verifying… / `contacting`: Contacting [host]… / `extracting`: Decrypting and restoring… / `done`: success state |
 
 **Success**
 
@@ -678,7 +694,8 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 |---|---|
 | Headline (ok glyph) | Opened. |
 | Sub line | [n] files restored to [path]. |
-| Integrity line (ok glyph) | Contents match the signed record. |
+| Integrity line (ok glyph; `verified: true`) | Contents match the signed record. |
+| Integrity line when Skip verification was on (`verified: false`; hide the line above; warn badge) | Signature NOT verified — you chose to skip verification. |
 | Temporary folder note | Saved to a temporary folder. It is deleted when you close sealdrop. |
 | Buttons | Copy folder path / Save to… (temporary only) / Open another package |
 | Files tile title | Files |
@@ -711,7 +728,7 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 - The pill reads `expires in [time]` and is a `role="timer"` with `aria-label="Time left"`. It is not a live region.
 - Colour is a secondary cue: `running` sage slab; `low` pink slab when 25% of the window or less remains or under 60 s; `expired` inset slab reading "expired". The word and the digits always carry the meaning.
 - A separate visually hidden live region (`aria-live="polite"`) announces only at thresholds: "10 minutes left", "1 minute left", "30 seconds left", "The window has ended." (when the window is shorter than a threshold, skip it).
-- The value is derived from the service's `expires_at`, never from a local deadline (section 11 item 1). Display ticks once per second with no animation. If the app cannot reach the service clock reading it shows the last value with the note "Last checked [time]" rather than guessing.
+- The value is derived from the service's `expires_at`, never from a local deadline (section 11, `open_package` and `receipt_fetch`). Display ticks once per second with no animation. The display never extends a window: it can only count down and then read "expired".
 
 ### 5.5 States
 
@@ -719,7 +736,7 @@ Header: title "Open"; subtitle "Check, unlock and restore a package."
 |---|---|
 | Idle | Large DropZone only; nothing else rendered. |
 | Checking | DropZone replaced by the Package summary; Delivery record tile shows a small indeterminate progress and "Checking [name]…". |
-| Ready | Delivery record rows filled; primary button raised blue-ac; if something blocks opening, it is `disabled` with the reason text. |
+| Ready | Delivery record rows filled; primary button raised blue-ac; if something blocks opening, it is `aria-disabled` with the reason text. |
 | Working | Inputs disabled; `progress` pill; phase text; button "Opening…" (or "Contacting [host]…" for the network step). |
 | Success | Package and Delivery tiles collapse to the "Opened" tile; Files tile and (timed) Countdown tile appear; focus moves to "Opened.". |
 | Error | `notice--err` above the button; inputs re-enabled; passphrase field keeps its text but is masked again and has the danger-ac ring. |
@@ -756,27 +773,27 @@ Purpose: check a package's signature and ciphertext hash without decrypting anyt
   ╰─────╯    ╭─────────────────────────────────────────────────────╮ │                                      │
    Open      │ RESULT                                              │ │ Name                                 │
              │                                                     │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-  ┌╌╌╌╌╌┐    │ ‹ ok Signature valid ›                              │ │ ┆ e.g. alice                       ┆ │
+  ┌╌╌╌╌╌┐    │ ‹ ! Signer not trusted ›                            │ │ ┆ e.g. alice                       ┆ │
   ┆ [/] ┆    │                                                     │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
   └╌╌╌╌╌┘    │ (ok) Manifest signature matches the signer key.     │ │                                      │
   Verify     │ (ok) Ciphertext hash matches the manifest.          │ │ ( Trust this signer )                │
              │ (!)  Signer is not in your trusted list.            │ │                                      │
   ╭─────╮    │                                                     │ ╰──────────────────────────────────────╯
-  │[o-] │    │ This confirms who signed the package and that it    │ ╭──────────────────────────────────────╮
-  ╰─────╯    │ has not changed. It does not show what is inside.   │ │ CHECK A RECEIPT                      │
-   Keys      │                                                     │ │                                      │
-             │ Package id      3f2a91c0-...-b71e                   │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-             │ Sealed          13 Oct 2026 09:00 UTC               │ │ ┆    Drop a .receipt.json here     ┆ │
-             │ Classification  confidential                        │ │ ┆      ( Choose receipt... )       ┆ │
-             │ Advisory date   2026-12-31 (not enforced)           │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
-             │ Recipients      1 (x25519)                          │ │                                      │
-             │ SHA-256         9c1f...e0a4   ( Copy )              │ │ Service key (optional)               │
-             │ Timed release   10 minutes after first open         │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-  ╭─────╮    │                 release.example.org                 │ │ ┆ Paste the service key            ┆ │
-  │ [=] │    │                                                     │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
-  ╰─────╯    │                                                     │ │                                      │
- Settings    │                                                     │ │ (ok) Receipt verified.               │
-             │                                                     │ │                                      │
+  │[o-] │    │ This confirms which key signed the package and that │ ╭──────────────────────────────────────╮
+  ╰─────╯    │ it has not changed. It does not show what is        │ │ CHECK A RECEIPT                      │
+   Keys      │ inside.                                             │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+             │ Package id      3f2a91c0-...-b71e                   │ │ ┆    Drop a .receipt.json here     ┆ │
+             │ Sealed          13 Oct 2026 09:00 UTC               │ │ ┆      ( Choose receipt... )       ┆ │
+             │ Classification  confidential                        │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
+             │ Advisory date   2026-12-31 (not enforced)           │ │                                      │
+             │ Recipients      1 (x25519)                          │ │ Service key (optional)               │
+             │ SHA-256         9c1f...e0a4   ( Copy )              │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+             │ Timed release   10 minutes after first open         │ │ ┆ Paste the service key            ┆ │
+  ╭─────╮    │                 release.example.org                 │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
+  │ [=] │    │                                                     │ │ Enter the service key from the       │
+  ╰─────╯    │                                                     │ │ sealed manifest to pin it.           │
+ Settings    │                                                     │ │ (!) Signature valid — service key    │
+             │                                                     │ │     not checked                      │
              ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
  sealdrop 0.2
 ```
@@ -814,7 +831,7 @@ Header: title "Verify"; subtitle "Check a package without opening it."
 | Row, warning | Signer is not in your trusted list. |
 | Row, error | The manifest signature doesn't match. The record may have been altered. |
 | Row, error | The package doesn't match the hash in its manifest. It may have been changed or damaged. |
-| Closing line | This confirms who signed the package and that it hasn't changed. It doesn't show what is inside. |
+| Closing line | This confirms which key signed the package and that it hasn't changed. It doesn't show what is inside. |
 | Detail labels | Package id / Sealed / Created with / Classification / Advisory date / Recipients / SHA-256 / Timed release |
 | Classification empty | None |
 | Advisory date value | [date] (not enforced) |
@@ -851,9 +868,10 @@ Receipt tile:
 | DropZone headline | Drop a .receipt.json here |
 | Button | Choose receipt… |
 | Field label / placeholder | Service key (optional) / Paste the service key from the manifest |
-| Field helper | Without it, the receipt is only checked against the key it carries. |
-| Success (ok chip + text) | Receipt verified. First opened [date] UTC, window ends [date] UTC, opened [n] time(s). |
-| Not opened | Receipt verified. The package has not been opened yet. |
+| Field helper (shown while the field is empty) | Enter the service key from the sealed manifest to pin it. |
+| Success with a service key entered (`pinned: true`; ok chip) | Receipt verified. First opened [date] UTC, window ends [date] UTC, opened [n] time(s). |
+| Success without a service key (`pinned: false`; warn chip) | Signature valid — service key not checked. First opened [date] UTC, window ends [date] UTC, opened [n] time(s). |
+| Not opened (either chip, as above) | The package has not been opened yet. |
 | Error | The receipt signature doesn't match. Don't rely on it. |
 | Error: key mismatch | The receipt wasn't signed by the service key you entered. |
 | Error: unreadable | That doesn't look like a sealdrop receipt. |
@@ -890,36 +908,36 @@ Purpose: create or replace your identity, manage trusted signers, and see receip
 
              ╭─────────────────────────────────────────────────────╮ ╭──────────────────────────────────────╮
   ╭─────╮    │ YOUR IDENTITY                                       │ │ RECEIPTS                             │
-  │ [@] │    │ Recipient: give this to people who send to you      │ │ Timed packages sent    ( Check now ) │
-  ╰─────╯    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │                                      │
-   Seal      │ ┆ age1qx7k4m...9d4m0s3f                           ┆ │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ ┆ report-q3                        ┆ │
-  ╭─────╮    │ ( Copy recipient )                                  │ │ ┆ Sent 13 Oct 09:00 UTC            ┆ │
-  │ [v] │    │                                                     │ │ ┆ ‹ Opened 13 Oct 09:12 UTC ›      ┆ │
-  ╰─────╯    │ Signer key: lets people verify what you send        │ │ ┆ [ expires in 4 m 10 s ]          ┆ │
-   Open      │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ ┆ (ok) Receipt verified            ┆ │
-             │ ┆ RWQf6LRCGA9i53mlYecO4Izt...                     ┆ │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
-  ╭─────╮    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │                                      │
-  │ [/] │    │ ( Copy signer key )   ( Replace identity... )       │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-  ╰─────╯    │                                                     │ │ ┆ payroll-oct                      ┆ │
-  Verify     │ Stored on this computer. Never uploaded.            │ │ ┆ Sent 10 Oct 14:30 UTC            ┆ │
-             ╰─────────────────────────────────────────────────────╯ │ ┆ ‹ Opened 10 Oct 15:02 UTC ›      ┆ │
-  ┌╌╌╌╌╌┐    ╭─────────────────────────────────────────────────────╮ │ ┆ Expired 10 Oct 15:12 UTC         ┆ │
-  ┆[o-] ┆    │ TRUSTED SIGNERS                                     │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
-  └╌╌╌╌╌┘    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │                                      │
-   Keys      │ ┆ alice   RWQf6LRCGA...3xK                 Remove ┆ │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
-             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ ┆ site-plans                       ┆ │
-             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ ┆ Sent 12 Oct 08:41 UTC            ┆ │
-             │ ┆ bob     RWQa91Zc7p...Qm2                 Remove ┆ │ │ ┆ ‹ Waiting: not opened yet ›      ┆ │
-             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
-             │                                                     │ │                                      │
-             │ Add a signer                                        │ │                                      │
-             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌┐  ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐            │ │                                      │
-  ╭─────╮    │ ┆ Name       ┆  ┆ Signer key (RWQ...)  ┆  ( Trust ) │ │                                      │
-  │ [=] │    │ └╌╌╌╌╌╌╌╌╌╌╌╌┘  └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘            │ │                                      │
+  │ [@] │    │ Recipient: give this to people who send to you      │ │ Pick the manifest of a package you   │
+  ╰─────╯    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ sealed.                              │
+   Seal      │ ┆ age1qx7k4m...9d4m0s3f                           ┆ │ │ ( Choose manifest... )               │
+             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │                                      │
+  ╭─────╮    │ ( Copy recipient )                                  │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+  │ [v] │    │ Signer key: people add this to check what you send  │ │ ┆ report-q3                        ┆ │
+  ╰─────╯    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ ┆ ‹ Opened 13 Oct 09:12 UTC ›      ┆ │
+   Open      │ ┆ RWQf6LRCGA9i53mlYecO4Izt...                     ┆ │ │ ┆ [ expires in 4 m 10 s ]          ┆ │
+             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ ┆ Opened 2 times                   ┆ │
+  ╭─────╮    │ ( Copy signer key )   ( Replace identity... )       │ │ ┆ (ok) Receipt verified            ┆ │
+  │ [/] │    │                                                     │ │ ┆ ( Check now )                    ┆ │
+  ╰─────╯    │ Stored in C:\Users\you\.sealdrop. The private keys  │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
+  Verify     │ never leave this computer.                          │ │                                      │
+             ╰─────────────────────────────────────────────────────╯ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+  ┌╌╌╌╌╌┐    ╭─────────────────────────────────────────────────────╮ │ ┆ payroll-oct                      ┆ │
+  ┆[o-] ┆    │ TRUSTED SIGNERS                                     │ │ ┆ Opened 10 Oct 15:02 UTC, expired ┆ │
+  └╌╌╌╌╌┘    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ ┆ Opened 1 time                    ┆ │
+   Keys      │ ┆ alice   RWQf6LRCGA...3xK                 Remove ┆ │ │ ┆ (ok) Receipt verified            ┆ │
+             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ ┆ ( Check now )                    ┆ │
+             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
+             │ ┆ bob     RWQa91Zc7p...Qm2                 Remove ┆ │ │                                      │
+             │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │
+             │                                                     │ │ ┆ site-plans                       ┆ │
+             │ Add a signer                                        │ │ ┆ ‹ Waiting: not opened yet ›      ┆ │
+             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌┐  ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐            │ │ ┆ (ok) Receipt verified            ┆ │
+  ╭─────╮    │ ┆ Name       ┆  ┆ Signer key (RWQ...)  ┆  ( Trust ) │ │ ┆ ( Check now )                    ┆ │
+  │ [=] │    │ └╌╌╌╌╌╌╌╌╌╌╌╌┘  └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘            │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │
   ╰─────╯    │                                                     │ │                                      │
- Settings    │ Letters, digits, - and _ only.                      │ │                                      │
-             │                                                     │ │                                      │
+ Settings    │ Letters, digits, - and _ only.                      │ │ Not saved. Gone when you close       │
+             │                                                     │ │ sealdrop.                            │
              ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
  sealdrop 0.2
 ```
@@ -933,7 +951,7 @@ Grid: left `.span-7` = "Your identity" over "Trusted signers"; right `.span-5` =
 | Your identity (none) | Tile, text, SoftButton primary "Create identity" |
 | Your identity (present) | Tile, Field `value` x2 (recipient, signer key), SoftButton `--sm` "Copy recipient", "Copy signer key", SoftButton `--pink` "Replace identity…", Tile `dialog` (Replace) |
 | Trusted signers | Tile, list of Tile `row` (name, short key, link-btn "Remove"), Field text x2, SoftButton "Trust signer" |
-| Receipts | Tile, SoftButton `--sm` "Check now", list of Tile `row` with Chip `status`, Countdown (running / expired / waiting), text |
+| Receipts | Tile, SoftButton "Choose manifest…", list of Tile `row` (session only) with Chip `status`, Countdown (running / low / expired / waiting), SoftButton `--sm` "Check now", text |
 
 ### 7.3 Copy
 
@@ -953,12 +971,12 @@ Header: title "Keys"; subtitle "Your identity, trusted signers and receipts."
 | Signer key label | Signer key |
 | Signer key helper | People add this to their trusted signers so they can check what you send. |
 | Buttons | Copy recipient / Copy signer key |
-| Storage note | Stored in [path]. The private keys never leave this computer. |
+| Storage note | Stored in [dir]. The private keys never leave this computer. |
 | Replace button | Replace identity… |
 | Dialog title | Replace your identity? |
 | Dialog body | This creates new keys and deletes the old ones. Packages sealed to your old recipient string can no longer be opened, and people who trust your old signer key will need your new one. |
 | Dialog field label / placeholder | Type REPLACE to confirm / REPLACE |
-| Dialog buttons | Keep my identity (default focus) / Replace identity (pink, disabled until the word matches) |
+| Dialog buttons | Keep my identity (default focus) / Replace identity (pink, `aria-disabled` until the word matches) |
 | Error | Couldn't create the keys: [reason]. Your existing identity was not changed. |
 
 **Trusted signers**
@@ -982,17 +1000,20 @@ Header: title "Keys"; subtitle "Your identity, trusted signers and receipts."
 | Element | Copy |
 |---|---|
 | Tile title | Receipts |
-| Subtitle | Timed packages sent |
-| Button | Check now |
-| Row, not opened (Countdown `waiting`) | [name] · Sent [date] UTC · Waiting: not opened yet |
-| Row, window running (Countdown `running`/`low`) | [name] · Sent [date] UTC · Opened [date] UTC · expires in [time] · Opened [n] time(s) · Receipt verified |
-| Row, window over | [name] · Sent [date] UTC · Opened [date] UTC, expired · Receipt verified |
-| Verified badge | Receipt verified |
-| Not verified badge (error) | Receipt not verified |
+| Lead | Pick the manifest of a package you sealed. |
+| Button | Choose manifest… |
+| Row button | Check now |
+| Row, not opened (Countdown `waiting`) | [name] · Waiting: not opened yet · Receipt verified |
+| Row, window running (Countdown `running`/`low`, ticking from `remaining_secs`) | [name] · Opened [date] UTC · expires in [time] · Opened [n] time(s) · Receipt verified |
+| Row, window over | [name] · Opened [date] UTC, expired · Receipt verified |
+| Verified badge (`pinned: true`; `receipt_fetch` always pins to the service key in the manifest) | Receipt verified |
+| Unpinned badge (warn; only when a result has `pinned: false`) | Signature valid — service key not checked |
+| Unpinned helper | Enter the service key from the sealed manifest to pin it. |
 | Footer note | Receipts are signed by the release service, and the service clock decides the times shown here. |
-| Empty | No receipts yet. When you send a timed package, its receipt appears here once the recipient opens it. |
-| Checked | Checked [time]. (live region) |
-| Error: unreachable | Couldn't reach the release service. Showing what was saved last time. |
+| Session note | Receipts you check here are not saved. They are gone when you close sealdrop. |
+| Empty | No receipts checked yet. Choose the manifest of a timed package you sealed to see when it was opened. |
+| Updated (live region) | Receipt updated. |
+| Error: unreachable | Couldn't reach the release service. The row keeps its last result from this session. |
 | Error: no service | No release service is set up. Add one in Settings to check receipts. |
 | Error: mismatch | This receipt doesn't match the service key saved when you sealed the package. Don't rely on it. |
 
@@ -1001,16 +1022,16 @@ Header: title "Keys"; subtitle "Your identity, trusted signers and receipts."
 | State | What changes visually |
 |---|---|
 | No identity | Identity tile is the empty state with the primary "Create identity"; the page header pill says "No identity"; no banner on this screen. |
-| Creating | Button reads "Creating your keys…", disabled, `progress` pill indeterminate. |
+| Creating | Button reads "Creating your keys…", `aria-disabled`, `progress` pill indeterminate. |
 | Identity present | Two `value` fields (inset, mono, selectable) with Copy buttons. |
 | Copy | Button label briefly adds "Copied." beside it (inline text, live region); the label itself does not change. |
 | Replace dialog | Scrim over the window, centered `Tile--dialog`; focus trapped; Esc and "Keep my identity" close it. |
-| Receipts refreshing | "Check now" disabled with the text "Checking…"; rows keep their last state. |
+| Receipts refreshing | "Check now" is `aria-disabled` with the text "Checking…"; rows keep their last state. |
 | Error | `notice--err` inside the affected tile; nothing else changes. |
 
 ### 7.5 Accessibility notes
 
-- Tab order: nav, Create identity (or Copy recipient, Copy signer key, Replace identity…), each signer's Remove, Name, Signer key, Trust signer, Check now, then the receipt rows (not interactive).
+- Tab order: nav, Create identity (or Copy recipient, Copy signer key, Replace identity…), each signer's Remove, Name, Signer key, Trust signer, Choose manifest…, then each receipt row's Check now.
 - The Replace dialog is `role="alertdialog"` with `aria-labelledby` (title) and `aria-describedby` (body); focus starts on "Keep my identity"; Tab is trapped; Esc closes; focus returns to "Replace identity…".
 - Receipt rows are list items; the Countdown inside each uses the same `role="timer"` rule, with threshold announcements disabled in this list (too noisy); the text carries the state.
 - The destructive button is pink with `--ink` text (5.7:1), and its meaning is in the label, not the colour.
@@ -1026,70 +1047,70 @@ Purpose: set the release service and deposit token, choose passphrase options (w
 ```
 
    (~~~)     Settings                                                                    ( * Identity ready )
-             Release service, passphrase options and defaults.
+             Release service, passphrase options and output.
 
              ╭─────────────────────────────────────────────────────╮ ╭──────────────────────────────────────╮
-  ╭─────╮    │ RELEASE SERVICE                                     │ │ DEFAULTS                             │
-  │ [@] │    │ Used only for timed release.                        │ │                                      │
-  ╰─────╯    │                                                     │ │ [=o]  Also encrypt to me             │
-   Seal      │ Release service address                             │ │                                      │
-             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ │ [o=]  ASCII armor                    │
-  ╭─────╮    │ ┆ https://release.example.org                     ┆ │ │                                      │
-  │ [v] │    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ Default save folder                  │
-  ╰─────╯    │                                                     │ │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐                 │
-   Open      │ Deposit token                                       │ │ ┆ Documents        ┆   ( Choose )    │
-             │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐            │ │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘                 │
-  ╭─────╮    │ ┆ ••••••••••••••••••••                 ┆  ( Show )  │ │                                      │
-  │ [/] │    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘            │ │                                      │
-  ╰─────╯    │                                                     │ ╰──────────────────────────────────────╯
-  Verify     │ ( Save )    Saved.                                  │ ╭──────────────────────────────────────╮
-             │                                                     │ │ NETWORK                              │
-  ╭─────╮    ╰─────────────────────────────────────────────────────╯ │                                      │
-  │[o-] │    ╭─────────────────────────────────────────────────────╮ │ sealdrop contacts only the release   │
-  ╰─────╯    │ PASSPHRASES                                         │ │ service address above, and only for  │
-   Keys      │                                                     │ │ timed release. Nothing else leaves   │
-             │ [o=]  Use Argon2id (non-standard)                   │ │ this computer.                       │
-             │       Adds little over scrypt and breaks            │ │                                      │
-             │       interoperability with stock age tools. Off    │ │                                      │
-             │       by default.                                   │ ╰──────────────────────────────────────╯
-             │                                                     │ ╭──────────────────────────────────────╮
-             │ Default strength                                    │ │ ABOUT                                │
-             │ { Standard }  ( High, slower )                      │ │                                      │
-  ┌╌╌╌╌╌┐    │                                                     │ │ sealdrop 0.2.0                       │
-  ┆ [=] ┆    │ Default word list                                   │ │ Packages made for recipients or with │
-  └╌╌╌╌╌┘    │ { EFF, 6 words }  ( BIP-39, 10 words )              │ │ a standard passphrase open in stock  │
- Settings    │                                                     │ │ age.                                 │
-             │                                                     │ │                                      │
-             ╰─────────────────────────────────────────────────────╯ ╰──────────────────────────────────────╯
+  ╭─────╮    │ RELEASE SERVICE                                     │ │ OUTPUT                               │
+  │ [@] │    │ Used when you seal a timed package or check a       │ │ [o=]  ASCII armor                    │
+  ╰─────╯    │ receipt.                                            │ │       Writes text instead of binary. │
+   Seal      │                                                     │ │       The file is larger.            │
+             │ Release service address                             │ │                                      │
+  ╭─────╮    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐ │ ╰──────────────────────────────────────╯
+  │ [v] │    │ ┆ https://release.example.org                     ┆ │ ╭──────────────────────────────────────╮
+  ╰─────╯    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ │ │ NETWORK                              │
+   Open      │                                                     │ │                                      │
+             │ Deposit token                                       │ │ sealdrop makes network requests only │
+  ╭─────╮    │ ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐            │ │ to: the release service you          │
+  │ [/] │    │ ┆ ••••••••••••••••••••                 ┆  ( Show )  │ │ configure here (when you seal a      │
+  ╰─────╯    │ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘            │ │ timed package or check a receipt)    │
+  Verify     │                                                     │ │ and the release service named inside │
+             │ [[ Save ]]    Saved.     Clear service settings     │ │ a timed package you open (shown to   │
+  ╭─────╮    ╰─────────────────────────────────────────────────────╯ │ you before the call).                │
+  │[o-] │    ╭─────────────────────────────────────────────────────╮ │                                      │
+  ╰─────╯    │ PASSPHRASES                                         │ │ Release service: release.example.org │
+   Keys      │                                                     │ │                                      │
+             │ [o=]  Use Argon2id for passphrases ‹Non-standard›   │ ╰──────────────────────────────────────╯
+             │       Adds little over scrypt and breaks            │ ╭──────────────────────────────────────╮
+             │       interoperability with stock age tools. Off    │ │ ABOUT                                │
+             │       by default.                                   │ │                                      │
+             │                                                     │ │ sealdrop 0.2.0                       │
+             │ Default key strength                                │ │ Packages made for recipients or with │
+             │ { Standard }  ( High, slower )                      │ │ a standard passphrase open in stock  │
+  ┌╌╌╌╌╌┐    │                                                     │ │ age.                                 │
+  ┆ [=] ┆    │ Standard is scrypt 2^18 (Argon2id: 256 MiB). High   │ │ Keys: C:\Users\you\.sealdrop         │
+  └╌╌╌╌╌┘    │ is scrypt 2^20 (Argon2id: 2 GiB).                   │ ╰──────────────────────────────────────╯
+ Settings    │                                                     │
+             │                                                     │
+             ╰─────────────────────────────────────────────────────╯
  sealdrop 0.2
 ```
 
-Grid: left `.span-7` = "Release service" over "Passphrases"; right `.span-5` = "Defaults", "Network", "About".
+Grid: left `.span-7` = "Release service" over "Passphrases"; right `.span-5` = "Output", "Network", "About".
 
 ### 8.2 Components
 
 | Tile | Primitives |
 |---|---|
 | Release service | Tile, Field text (address), Field password (token) + "Show"/"Hide", SoftButton "Save", status text, SoftButton link "Clear" |
-| Passphrases | Tile, Toggle `with-note` (Argon2id) + Chip cream "Non-standard", Pill `seg` x2 |
-| Defaults | Tile, Toggle x2, Field path + SoftButton "Choose…", SoftButton link "Reset" |
+| Passphrases | Tile, Toggle `with-note` (Argon2id) + Chip cream "Non-standard", Pill `seg` (default key strength) |
+| Output | Tile, Toggle (ASCII armor) |
 | Network | Tile, text, status Pill |
 | About | Tile, text |
 
 ### 8.3 Copy
 
-Header: title "Settings"; subtitle "Release service, passphrase options and defaults."
+Header: title "Settings"; subtitle "Release service, passphrase options and output."
 
 **Release service**
 
 | Element | Copy |
 |---|---|
 | Tile title | Release service |
-| Lead | Used only for timed release. sealdrop contacts this address for nothing else. |
+| Lead | Used when you seal a timed package or check a receipt. |
 | Address label / placeholder | Release service address / https://release.example.org |
 | Address helper | Must start with https://. http:// works only for this computer (localhost). |
 | Token label / placeholder | Deposit token / Paste the token your operator gave you |
-| Token helper | Sent only to the release service above. Saved in sealdrop's settings on this computer. |
+| Token helper | Sent only to the release service that a package's own signed manifest names. Saved in sealdrop's settings on this computer. |
 | Show / Hide | Show / Hide |
 | Button | Save |
 | Saved | Saved. |
@@ -1107,30 +1128,23 @@ Header: title "Settings"; subtitle "Release service, passphrase options and defa
 | Extra line when on | Packages made this way open only in sealdrop. |
 | Segment label | Default key strength |
 | Segment | Standard / High (slower) |
-| Helper | Standard is scrypt 2^18. High is scrypt 2^20, or the desktop profile with Argon2id. |
-| Segment label | Default word list |
-| Segment | EFF · 6 words / BIP-39 · 10 words |
+| Helper | Standard is scrypt 2^18 (Argon2id: 256 MiB). High is scrypt 2^20 (Argon2id: 2 GiB). |
 | Saved (inline, live) | Saved. |
 
-**Defaults**
+**Output** (the app persists exactly five settings: `release_service`, `release_token`, `scrypt_log_n` (18 or 20), `armor`, `argon2id`; nothing else, so there are no other defaults to show)
 
 | Element | Copy |
 |---|---|
-| Tile title | Defaults |
-| Toggle (default on) | Also encrypt to me |
-| Helper | Applies to recipient packages. Never applied to passphrase or timed release packages. |
+| Tile title | Output |
 | Toggle (default off) | ASCII armor |
 | Helper | Writes text instead of binary. The file is larger. |
-| Field label | Default save folder |
-| Path default | Next to the source |
-| Buttons | Choose… / Reset |
 
 **Network**
 
 | Element | Copy |
 |---|---|
 | Tile title | Network |
-| Text | sealdrop contacts only the release service address above, and only for timed release. Nothing else leaves this computer. |
+| Text (verbatim) | sealdrop makes network requests only to: the release service you configure here (when you seal a timed package or check a receipt) and the release service named inside a timed package you open (shown to you before the call). |
 | Status pill | Release service: [host] / Release service: not set |
 
 **About**
@@ -1140,21 +1154,21 @@ Header: title "Settings"; subtitle "Release service, passphrase options and defa
 | Tile title | About |
 | Version | sealdrop 0.2.0 |
 | Text | Packages made for recipients or with a standard passphrase open in stock age tools. Argon2id and timed release packages need sealdrop. |
-| Key store | Keys are stored in [path]. |
+| Key store | Keys are stored in [dir]. |
 
 ### 8.4 States
 
 | State | What changes visually |
 |---|---|
 | Idle | Fields show saved values; token is masked. |
-| Editing service fields | "Save" becomes enabled (raised, blue-ac); until then disabled. |
-| Saving | "Save" reads "Saving…" and is disabled; on success the text "Saved." appears beside it and in the live region for 4 seconds, then stays as the field state. |
+| Editing service fields | "Save" becomes enabled (raised, blue-ac); until then `aria-disabled`. |
+| Saving | "Save" reads "Saving…" and is `aria-disabled`; on success the text "Saved." appears beside it and in the live region for 4 seconds, then stays as the field state. |
 | Toggles and segments | Apply immediately; "Saved." appears next to the changed control. No Save button for them. |
 | Error | `field__error` under the field, `aria-invalid`; the old saved value stays in effect. |
 
 ### 8.5 Accessibility notes
 
-- Tab order: nav, banner button, address, token, Show, Save, Clear, Argon2id toggle, strength segment, word-list segment, Also encrypt to me, ASCII armor, Choose…, Reset.
+- Tab order: nav, banner button, address, token, Show, Save, Clear, Argon2id toggle, strength segment, ASCII armor.
 - The Argon2id toggle is `role="switch"` with `aria-describedby` pointing at the honesty note, so a screen reader reads the note with the switch.
 - The token field is `type="password"`, `autocomplete="off"`, never echoed back into the DOM as plain text unless Show is pressed; Show state resets when you leave the screen.
 - "Non-standard" chip: ink on cream (9.1:1); the same word is in the note, so colour is not required.
@@ -1164,7 +1178,7 @@ Header: title "Settings"; subtitle "Release service, passphrase options and defa
 ## 9. Accessibility rules that apply everywhere
 
 - Target: WCAG 2.2 AA. All body text is `--ink` on `--bg` or an accent tint at 4.5:1 or better (measured in section 1.2). Muted text is `--muted-ac` (5.1:1). Large decorative digits are also in `--ink`.
-- White text on pink, blue or sage is used nowhere. Pink and blue are fills, glyphs and rings. Class `aa` on the root enforces this for the fixed CSS.
+- White text on pink, blue or sage is used nowhere. Pink and blue are fills, glyphs and rings. Class `aa` on the root (mandatory) enforces this for the fixed CSS.
 - Focus: every interactive element has a visible 3 px `--blue-deep` ring (3.05:1 on `--bg`). Fields show it as a ring around the inset. Never remove an outline without replacing it. Focus order follows visual order (left column then right column, top to bottom).
 - Hit targets: nav 64 px, buttons about 45 px high (`--sm` buttons about 36 px), toggle rows 44 px high (the switch itself is 52 x 30 and the row is the target), chip remove buttons 24 px (minimum for WCAG 2.2 target size) with spacing, `link-btn` 28 px high with 6 px side padding.
 - Toggles are `role="switch"` with `aria-checked`; segmented choices are `role="radiogroup"` with arrow-key selection; disclosures use `aria-expanded`; dialogs use `role="alertdialog"` with a focus trap and Esc; the countdown is `role="timer"`.
@@ -1181,9 +1195,9 @@ Header: title "Settings"; subtitle "Release service, passphrase options and defa
 
 Network
 
-- Make any network request other than the one Rust makes to the configured release service URL, and only for timed release (deposit while sealing, unlock while opening, receipt checks). No telemetry, analytics, update checks, crash reporting, font or icon CDNs, remote images, or link previews.
+- Make any network request other than those in this sentence, which is also shown in Settings: "sealdrop makes network requests only to: the release service you configure here (when you seal a timed package or check a receipt) and the release service named inside a timed package you open (shown to you before the call)." All of them are made by Rust, never by the WebView. No telemetry, analytics, update checks, crash reporting, font or icon CDNs, remote images, or link previews.
 - Let the WebView fetch anything. CSP is `default-src 'self'`; fonts and glyphs are bundled; the WebView has no `http`, `shell` or `fs` plugin. All file access goes through Rust commands with paths from native dialogs or drag-and-drop.
-- Send the deposit token anywhere except the release service address it was saved with. Never put it in a URL, a title, a log or an error message.
+- Send the deposit token anywhere except the service recorded in the package's own signed manifest (the backend checks the manifest signature first). Never use the Settings address for a token that belongs to a package's service. Never put it in a URL, a title, a log or an error message.
 
 Secrets
 
@@ -1211,14 +1225,52 @@ Interface
 
 ---
 
-## 11. Gaps Task 15 must settle with the backend (not design decisions)
+## 11. Backend contract
 
-1. **Countdown clock.** The countdown must be computed from the service's `expires_at`, not a local timer. The unlock response gives `first_unlock` and `expires_at` but the UI also needs the service's "now" at the moment of the response. Ask `open_package` to return `expires_at` plus `service_now` (or `remaining_secs`). Display value = `expires_at - (service_now + monotonic time elapsed since the response)`, using the monotonic clock only to advance between samples; never read the system wall clock to decide anything.
-2. **Receipts.** Spec section 9 lists no receipt commands, but Keys shows receipts and Verify checks one. Add `list_receipts`, `check_receipts` (fetch and verify via `receipt fetch`) and `verify_receipt` (`receipt verify`). The app also needs a small local record of timed packages it sealed (package id, display name, manifest path, sent time) with no secrets, so Keys has something to list.
-3. **"Save to…" after a timed open.** Re-opening inside the window is allowed by the service, but the spec says the temp folder is the default. Decide whether Save to… re-runs extraction (a second unlock call) or copies the temporary folder through a new Rust command; the copy in this brief works with either.
-4. **Pre-scan on drop.** The "[n] files · [size]" chip needs a cheap scan command (or use the first progress events). If neither exists, show the name only.
-5. **Where defaults live.** "Also encrypt to me", ASCII armor, default word list, default strength and default save folder are app preferences; the core settings known today are the release service, deposit token and the Argon2id switch. Store them with `set_settings`.
-6. **Deposit token at rest.** The spec stores it in settings, not in an OS keychain (no plugin). Keep the file readable by the current user only, and keep the helper copy honest ("Saved in sealdrop's settings on this computer").
-7. **Network scope.** The spec scopes the Tauri `http` capability to the configured URL, but the core makes the call with `ureq` in Rust. If the WebView never needs `http`, leave the plugin out entirely; this brief assumes the WebView makes no requests.
-8. **Passphrase format for Copy.** Copy places the words separated by single spaces unless the core defines another display format; the chips show the same words.
-9. **Fonts.** Bundle Nunito Variable locally (see 1.3) so the CSP and the "no other network" rule hold.
+Fixed facts, decided after design review. These are the Tauri commands the screens call. Every command returns a result or an error string (`Result<T, String>`); the UI shows the error string inside the copy patterns above (for example "Couldn't seal: [reason]."). There is no `http`, `shell` or `fs` plugin: the WebView never talks to the network and never reads files; all file and network work happens in Rust.
+
+### 11.1 Commands
+
+| Command | Returns | Used by |
+|---|---|---|
+| `get_identity()` | `{ exists, recipient?, signer?, dir }` (`dir` is the key-store path shown in Keys and Settings) | shell (status pill, banner), Keys |
+| `generate_identity(force)` | same shape as `get_identity` | Keys ("Create identity"; "Replace identity" calls it with `force = true`) |
+| `parse_recipient(s)` | `{ kind, fingerprint, plugin: string \| null, allowed: bool }` | Seal, at add-time. Failure (error string) shows "Not a recipient string". `allowed = false` shows "Plugin [name] is not on the allow-list". Chip colour from `kind`; hardware-only rule from `kind` starting with `plugin:`. "Plugin binary missing" cannot be known here: it surfaces as the Seal error. |
+| `seal(args)` | `{ package, manifest, package_id, ciphertext_sha256, files, bytes, passphrase?, entropy_bits?, release?: { service, window_secs } }` | Seal. `passphrase` and `entropy_bits` are present only in passphrase mode; `release` only for timed release. |
+| `probe(path)` | `{ needs_passphrase, timed_release?: { service, release_id } }` | Open, for `.sealdrop.age` files only. Decides whether the Unlock tile asks for a passphrase and whether the Timed package tile shows. The Seal input is never probed or pre-scanned: the Seal DropZone shows the chosen path and nothing else (no "[n] files · [size]"). |
+| `verify(path, signer?)` | `{ ok, untrusted_signer?, package_id?, signer?, trusted_as?, created?, classification?, expires?, recipients?: [{ kind, fingerprint }], release?: { service, window_secs }, ciphertext_sha256? }` | Verify and the Delivery record in Open. `ok = false` with `untrusted_signer` set is the "Signer not trusted" state; the "Trust this signer" mini-form (name field) uses that key with `add_trusted`. Any other failure is an error string and shows the failed state. `signer` (second argument) is the expected-key field. |
+| `open_package(args)` | `{ root, files, bytes, signer?, trusted_as?, verified: bool, first_unlock?, expires_at?, remaining_secs? }` | Open. `verified = false` means "Skip verification" was on: show "Signature NOT verified — you chose to skip verification." (warn badge) and hide "Contents match the signed record." For timed packages `remaining_secs` (service clock) drives the Countdown. |
+| `list_trusted()` / `add_trusted(name, key)` / `remove_trusted(name)` | trusted signers `[{ name, key }]` / ok / ok | Keys, Verify, Open |
+| `get_settings()` / `set_settings(s)` | exactly `{ release_service?, release_token?, scrypt_log_n (18 \| 20), armor, argon2id }` | Settings. These five fields ARE the app defaults; nothing else is persisted (no default word list, save folder or "Also encrypt to me" default; those reset per session). `scrypt_log_n` 18 is "Standard", 20 is "High (slower)"; `armor` is the ASCII armor toggle; `argon2id` is the Settings toggle. |
+| `receipt_fetch(manifest_path)` | `{ release_id, first_unlock?, expires_at?, remaining_secs?, unlock_count, service_key, pinned: true, saved_to }` | Keys (Receipts: "Choose manifest…", then "Check now" per row). The key is pinned to the service key recorded in the manifest, so the chip is always "Receipt verified". `remaining_secs` is the service-clock remaining time at the moment of the response. |
+| `receipt_verify(receipt_path, service_key?)` | same as `receipt_fetch` without `saved_to`, with `pinned: bool` | Verify ("Check a receipt"). `pinned = true` (a service key was entered and matched): "Receipt verified". `pinned = false`: warn chip "Signature valid — service key not checked" plus the helper "Enter the service key from the sealed manifest to pin it." |
+
+Receipt chips, everywhere (Verify and Keys): pinned shows "Receipt verified" (ok badge); not pinned shows "Signature valid — service key not checked" (warn badge) and, where there is a field for it, the helper text above.
+
+Opening "Save to…" after a temporary open is a second `open_package` call with `temp = false` and an `out_dir`. It is a second unlock inside the window, and the helper under the button says so ("Saving to a folder unlocks the package a second time, inside the window.").
+
+### 11.2 Progress event
+
+One event, `progress { kind, detail }`, with `kind` one of `packing`, `encrypted`, `contacting`, `verifying`, `extracting`, `done`. Phase labels map as follows (the UI shows one label at a time and keeps `detail` out of the label unless it is a count or a host).
+
+| `kind` | Seal label | Open label |
+|---|---|---|
+| `packing` | Packing and encrypting… | (not used) |
+| `encrypted` | Signing and writing the delivery record… | (not used) |
+| `contacting` | Placing the key with the release service… (timed only) | Contacting [host]… (timed only) |
+| `verifying` | (not used) | Verifying… |
+| `extracting` | (not used) | Decrypting and restoring… |
+| `done` | success state | success state |
+
+### 11.3 Countdown clock
+
+The Countdown on Open and in each Keys receipt row is driven by `remaining_secs`, which is read on the service clock at the moment of the response. The UI advances it with a monotonic timer (never the system wall clock) from that sample: displayed = `remaining_secs - elapsed_since_response`, clamped at 0, then "expired". The Keys row ticks the same way from the `receipt_fetch` sample; "Check now" takes a new sample. Nothing is ever extended, and no deadline is stored locally.
+
+### 11.4 Rules the backend enforces (the UI relies on them)
+
+- The deposit token is only ever sent to the service recorded in the package's own signed manifest. Receipts and seals both check the manifest signature before the token leaves; the Settings address is where new timed packages are sealed, not a destination for tokens of other packages.
+- Argon2id: Standard is the compat profile (256 MiB); High is the desktop profile (2 GiB). The Seal helper for High with Argon2id reads "High needs about 2 GiB of free memory to open." For scrypt, `scrypt_log_n` 18 or 20.
+- The QR is rendered client-side from the words with the `qrcode` npm package into a canvas. Nothing is sent anywhere to make it.
+- `parse_recipient` is the only recipient validation the UI does; it makes no network call.
+- Window rule for the UI: nothing in the WebView stores secrets (see section 10); `get_identity` returns public strings only.
+- Fonts: bundle Nunito Variable locally (see 1.3) so the CSP and the network rule hold.
