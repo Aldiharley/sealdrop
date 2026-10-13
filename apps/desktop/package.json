@@ -5,6 +5,9 @@
   "type": "module",
   "description": "sealdrop desktop app",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

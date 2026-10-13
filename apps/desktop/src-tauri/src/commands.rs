@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use age::secrecy::SecretString;
 use sealdrop_core::keys::{KeyStore, Settings};
@@ -19,6 +20,7 @@ use sealdrop_core::progress::{Progress, ProgressEvent};
 use sealdrop_core::Error;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
+use zeroize::Zeroizing;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -67,7 +69,27 @@ fn err_msg(e: &Error) -> String {
         Some(Error::ReleaseExpired) => {
             "this package has expired at the release service and can no longer be opened".into()
         }
-        _ => e.to_string(),
+        _ => strip_cli_hint(e.to_string()),
+    }
+}
+
+/// The core's "signer ... is not trusted" message ends with a `sealdrop trust add ...`
+/// command line. The app offers "Trust this signer" itself, so drop the CLI advice.
+fn strip_cli_hint(msg: String) -> String {
+    match msg.find("; add it with `sealdrop trust add") {
+        Some(i) => msg[..i].to_string(),
+        None => msg,
+    }
+}
+
+/// Paths come from native dialogs and drag-and-drop, which always give absolute paths;
+/// anything else is refused rather than resolved against an unknown working directory.
+fn abs(p: &str) -> CmdResult<PathBuf> {
+    let p = PathBuf::from(p);
+    if p.is_absolute() {
+        Ok(p)
+    } else {
+        Err("path must be absolute".into())
     }
 }
 
@@ -118,27 +140,55 @@ fn untrusted_signer(package: &Path, msg: &str) -> Option<String> {
         .then_some(doc.signer)
 }
 
-/// Directory that holds every temporary viewing folder of this process.
-fn view_root() -> PathBuf {
-    std::env::temp_dir().join(format!("sealdrop-view-{}", std::process::id()))
+/// The process's temporary viewing root: a randomly named, owner-only folder (never a
+/// predictable name in a shared temp folder), created on first use and deleted when the
+/// `TempDir` is dropped.
+static VIEW_ROOT: Mutex<Option<tempfile::TempDir>> = Mutex::new(None);
+
+fn fresh_root() -> CmdResult<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix("sealdrop-view-")
+        .tempdir()
+        .map_err(s)
+}
+
+/// The current viewing root, if one has been created and not yet removed (tests only).
+#[cfg(test)]
+fn view_root() -> Option<PathBuf> {
+    let g = VIEW_ROOT.lock().ok()?;
+    g.as_ref().map(|d| d.path().to_path_buf())
 }
 
 /// Removes this process's temporary viewing folders. Best effort.
 pub fn remove_view_dir() {
-    let _ = std::fs::remove_dir_all(view_root());
+    if let Ok(mut g) = VIEW_ROOT.lock() {
+        drop(g.take());
+    }
 }
 
-fn new_view_dir() -> CmdResult<PathBuf> {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let d = view_root().join(SEQ.fetch_add(1, Ordering::SeqCst).to_string());
+/// Creates one owner-only folder; an existing path is an error (no `recursive`).
+fn make_private_dir(d: &Path) -> CmdResult<()> {
     let mut b = std::fs::DirBuilder::new();
-    b.recursive(true);
+    b.recursive(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
         b.mode(0o700);
     }
-    b.create(&d).map_err(s)?;
+    b.create(d).map_err(s)
+}
+
+fn new_view_dir() -> CmdResult<PathBuf> {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let mut g = VIEW_ROOT
+        .lock()
+        .map_err(|_| "viewing folder lock poisoned")?;
+    if g.is_none() {
+        *g = Some(fresh_root()?);
+    }
+    let root = g.as_ref().map(|d| d.path().to_path_buf()).unwrap();
+    let d = root.join(SEQ.fetch_add(1, Ordering::SeqCst).to_string());
+    make_private_dir(&d)?;
     Ok(d)
 }
 
@@ -378,14 +428,15 @@ fn seal_impl(ks: &KeyStore, req: SealArgs, progress: &dyn Progress) -> CmdResult
 
     // The core takes the package name from the last path component, so resolve `.`, `..`
     // and relative paths first.
-    let input =
-        std::fs::canonicalize(&req.input).map_err(|e| format!("cannot read {}: {e}", req.input))?;
+    let input = std::fs::canonicalize(abs(&req.input)?)
+        .map_err(|e| format!("cannot read {}: {e}", req.input))?;
+    let out_dir = abs(&req.out_dir)?;
 
     let res = seal(
         ks,
         SealRequest {
             input,
-            out_dir: PathBuf::from(&req.out_dir),
+            out_dir,
             mode,
             include_self: req.include_self,
             allow_unrecoverable: req.allow_unrecoverable,
@@ -438,7 +489,7 @@ pub struct ProbeOut {
 #[tauri::command]
 pub async fn probe(path: String) -> CmdResult<ProbeOut> {
     blocking(move || {
-        let p = sealdrop_core::probe::probe(Path::new(&path)).map_err(ce)?;
+        let p = sealdrop_core::probe::probe(&abs(&path)?).map_err(ce)?;
         Ok(ProbeOut {
             needs_passphrase: p.needs_passphrase,
             // The header is not signed: the service shown here is a claim until `verify`.
@@ -513,7 +564,7 @@ fn verify_impl(ks: &KeyStore, path: &Path, signer: Option<&str>) -> CmdResult<Ve
                     ..Default::default()
                 }),
                 // Not the genuine "unknown signer" case: report the failure as it is.
-                None => Err(Error::Verify(msg).to_string()),
+                None => Err(err_msg(&Error::Verify(msg))),
             }
         }
         Err(e) => Err(ce(e)),
@@ -523,7 +574,7 @@ fn verify_impl(ks: &KeyStore, path: &Path, signer: Option<&str>) -> CmdResult<Ve
 #[tauri::command]
 pub async fn verify(path: String, signer: Option<String>) -> CmdResult<VerifyOut> {
     let signer = signer.filter(|k| !k.trim().is_empty());
-    blocking(move || verify_impl(&store(), Path::new(&path), signer.as_deref())).await
+    blocking(move || verify_impl(&store(), &abs(&path)?, signer.as_deref())).await
 }
 
 // ---------------------------------------------------------------------------------------
@@ -538,9 +589,9 @@ pub struct OpenArgs {
     pub out_dir: Option<String>,
     #[serde(default)]
     pub temp: bool,
-    /// Secret: turned into a `SecretString` as soon as possible; never logged.
+    /// Secret: wiped on drop, turned into a `SecretString` for the core; never logged.
     #[serde(default)]
-    pub passphrase: Option<String>,
+    pub passphrase: Option<Zeroizing<String>>,
     #[serde(default)]
     pub signer: Option<String>,
     #[serde(default)]
@@ -570,7 +621,7 @@ fn open_impl(
 ) -> CmdResult<OpenOut> {
     use sealdrop_core::open::{open, OpenRequest};
 
-    let package = PathBuf::from(&req.package);
+    let package = abs(&req.package)?;
     let signer = req.signer.filter(|k| !k.trim().is_empty());
 
     // Timed package: the header is unsigned, so unless verification was skipped, check it
@@ -595,14 +646,11 @@ fn open_impl(
         let d = new_view_dir()?;
         (d.clone(), Some(d))
     } else {
-        (
-            PathBuf::from(
-                req.out_dir
-                    .filter(|d| !d.trim().is_empty())
-                    .ok_or("choose a destination folder")?,
-            ),
-            None,
-        )
+        let dir = req
+            .out_dir
+            .filter(|d| !d.trim().is_empty())
+            .ok_or("choose a destination folder")?;
+        (abs(&dir)?, None)
     };
 
     let rep = open(
@@ -616,7 +664,7 @@ fn open_impl(
             passphrase: req
                 .passphrase
                 .filter(|p| !p.is_empty())
-                .map(SecretString::from),
+                .map(|p| SecretString::from(p.as_str())),
             limits: Default::default(),
         },
         fetch,
@@ -767,7 +815,7 @@ pub async fn receipt_fetch(manifest_path: String) -> CmdResult<ReceiptOut> {
         use sealdrop_core::release::{fetch_receipt, verify_receipt_for};
 
         let ks = store();
-        let manifest = PathBuf::from(&manifest_path);
+        let manifest = abs(&manifest_path)?;
         let name = manifest
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -812,7 +860,7 @@ pub async fn receipt_verify(
     let key = service_key
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty());
-    blocking(move || receipt_verify_impl(Path::new(&receipt_path), key.as_deref())).await
+    blocking(move || receipt_verify_impl(&abs(&receipt_path)?, key.as_deref())).await
 }
 
 // ---------------------------------------------------------------------------------------
@@ -862,7 +910,7 @@ mod tests {
             package: package.into(),
             out_dir: out.map(|o| o.display().to_string()),
             temp,
-            passphrase: pass.map(String::from),
+            passphrase: pass.map(|p| Zeroizing::new(p.to_string())),
             signer: None,
             skip_verify: false,
             overwrite: false,
@@ -1072,9 +1120,8 @@ mod tests {
             &NoProgress,
         );
         assert!(bad.is_err());
-        let leftovers = std::fs::read_dir(view_root())
-            .map(|d| d.count())
-            .unwrap_or(0);
+        let root = view_root().expect("a temporary open created the root");
+        let leftovers = std::fs::read_dir(&root).map(|d| d.count()).unwrap_or(0);
         assert_eq!(leftovers, 0, "a failed temporary open must not leave files");
 
         // Skip verification: `verified` is false and no signer is reported.
@@ -1083,13 +1130,14 @@ mod tests {
         let rep = open_impl(&sender, args, Box::new(MemoryFetch::expired()), &NoProgress).unwrap();
         assert!(!rep.verified);
         assert_eq!(rep.signer, None);
-        assert!(Path::new(&rep.root).starts_with(view_root()));
+        assert!(Path::new(&rep.root).starts_with(&root));
         assert_eq!(
             std::fs::read(Path::new(&rep.root).join("a.txt")).unwrap(),
             b"hello"
         );
         remove_view_dir();
-        assert!(!view_root().exists());
+        assert!(view_root().is_none());
+        assert!(!root.exists());
     }
 
     #[test]
@@ -1234,5 +1282,76 @@ mod tests {
             .unlock("memory://x", "id", &d.unlock_token_b64())
             .unwrap();
         assert_eq!(remaining_secs(&u.expires_at, &u.now), Some(360));
+    }
+
+    #[test]
+    fn view_root_is_random_and_new_dirs_refuse_existing_paths() {
+        let a = fresh_root().unwrap();
+        let b = fresh_root().unwrap();
+        assert_ne!(a.path(), b.path());
+        assert!(a
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("sealdrop-view-"));
+        // Neither the old predictable name nor a shared pid-derived name.
+        assert_ne!(
+            a.path(),
+            std::env::temp_dir().join(format!("sealdrop-view-{}", std::process::id()))
+        );
+        let sub = a.path().join("0");
+        make_private_dir(&sub).unwrap();
+        assert!(
+            make_private_dir(&sub).is_err(),
+            "an existing path must be refused"
+        );
+        assert!(
+            make_private_dir(&a.path().join("x").join("y")).is_err(),
+            "no recursive creation"
+        );
+    }
+
+    #[test]
+    fn relative_paths_are_refused() {
+        assert!(abs("report").is_err());
+        assert!(abs("./report").is_err());
+        assert_eq!(abs("report").unwrap_err(), "path must be absolute");
+        let d = tempfile::tempdir().unwrap();
+        assert!(abs(&d.path().display().to_string()).is_ok());
+
+        let ks = fast_store(&d.path().join("ks"));
+        let mut a = seal_args(&d.path().join("f.txt"), &d.path().join("o"));
+        a.input = "f.txt".into();
+        assert_eq!(
+            seal_impl(&ks, a, &NoProgress).err().unwrap(),
+            "path must be absolute"
+        );
+        let mut a = seal_args(d.path(), &d.path().join("o"));
+        a.out_dir = "o".into();
+        assert_eq!(
+            seal_impl(&ks, a, &NoProgress).err().unwrap(),
+            "path must be absolute"
+        );
+        let args = open_args("pkg.sealdrop.age", Some(d.path()), false, None);
+        let e = open_impl(&ks, args, Box::new(MemoryFetch::expired()), &NoProgress)
+            .err()
+            .unwrap();
+        assert_eq!(e, "path must be absolute");
+    }
+
+    #[test]
+    fn cli_hint_is_stripped_from_untrusted_errors() {
+        let msg = "verification failed: signer RWQabc is not trusted; add it with `sealdrop trust add <name> RWQabc` or pass --signer".to_string();
+        assert_eq!(
+            strip_cli_hint(msg),
+            "verification failed: signer RWQabc is not trusted"
+        );
+        assert_eq!(strip_cli_hint("other failure".into()), "other failure");
+        let e = Error::Verify(
+            "signer K is not trusted; add it with `sealdrop trust add <name> K` or pass --signer"
+                .into(),
+        );
+        assert!(!err_msg(&e).contains("sealdrop trust add"));
     }
 }
