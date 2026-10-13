@@ -114,6 +114,29 @@ fn verify_with(
     })
 }
 
+/// Manifest recipient kinds whose key is a passphrase (`recipients[0].kind`).
+pub fn is_passphrase_kind(kind: &str) -> bool {
+    kind == "scrypt" || kind == "argon2id"
+}
+
+/// Reads the manifest that sits beside `package` WITHOUT verifying it and returns the kind
+/// of its first recipient. A hint only (whether to ask for a passphrase); never a trust
+/// decision. `None` when there is no readable manifest.
+pub fn unverified_inner_kind(package: &Path) -> Option<String> {
+    let (mpath, _) = bundle_paths(package);
+    let mut bytes = Vec::new();
+    File::open(mpath)
+        .ok()?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Manifest::from_json(&bytes)
+        .ok()?
+        .recipients
+        .first()
+        .map(|r| r.kind.clone())
+}
+
 pub struct OpenRequest {
     pub package: PathBuf,
     pub out_dir: PathBuf,
@@ -159,7 +182,16 @@ pub fn open(
         .read_to_end(&mut head)?;
     let p = probe_bytes(&head)?;
     file.seek(SeekFrom::Start(0))?;
-    if p.needs_passphrase && req.passphrase.is_none() {
+    // In a timed package the passphrase stanza sits inside the encrypted release stanza,
+    // so the header cannot show it; the manifest records it. Refuse here, before the
+    // service is contacted, so a missing passphrase never starts the window.
+    let inner_kind = match &verify_report {
+        Some(v) => v.manifest.recipients.first().map(|r| r.kind.clone()),
+        None => unverified_inner_kind(&req.package),
+    };
+    let timed_passphrase =
+        p.release.is_some() && inner_kind.as_deref().is_some_and(is_passphrase_kind);
+    if (p.needs_passphrase || timed_passphrase) && req.passphrase.is_none() {
         return Err(Error::Other("this package needs a passphrase".into()));
     }
 
@@ -439,6 +471,69 @@ mod tests {
         )
         .unwrap();
         assert_eq!(opened.release.unwrap().expires_at, "2026-10-13T09:10:00Z");
+    }
+
+    /// A release service that must never be contacted.
+    struct NoNetwork;
+    impl ReleaseFetch for NoNetwork {
+        fn unlock(&self, _: &str, _: &str, _: &str) -> Result<Unlock> {
+            panic!("the release service must not be contacted");
+        }
+    }
+
+    #[test]
+    fn timed_release_with_passphrase_opens_and_missing_passphrase_never_unlocks() {
+        let (d, ks) = store();
+        let mut rq = req(
+            input(d.path()),
+            d.path().join("out"),
+            Mode::Passphrase {
+                list: WordList::Eff,
+                words: 6,
+                kdf: Kdf::Scrypt { log_n: 10 },
+            },
+        );
+        rq.release = Some(crate::seal::ReleaseConfig {
+            service: "memory://test".into(),
+            token: "t".into(),
+            window_secs: 90,
+        });
+        let res = seal(&ks, rq, &NoProgress).unwrap();
+        assert_eq!(res.manifest_doc.recipients[0].kind, "scrypt");
+        // The header alone cannot tell: the scrypt stanza is inside the release stanza.
+        let p = crate::probe::probe(&res.package).unwrap();
+        assert!(!p.needs_passphrase);
+        assert_eq!(
+            unverified_inner_kind(&res.package).as_deref(),
+            Some("scrypt")
+        );
+
+        // Without a passphrase: refused before any network call, verified or not.
+        for skip_verify in [false, true] {
+            let mut rq = open_req(res.package.clone(), d.path().join("none"));
+            rq.skip_verify = skip_verify;
+            let err = open(&ks, rq, Box::new(NoNetwork), &NoProgress)
+                .map(|_| ())
+                .unwrap_err();
+            assert!(err.to_string().contains("needs a passphrase"), "{err}");
+            assert!(!d.path().join("none").exists());
+        }
+
+        // With the passphrase it opens through the service.
+        let args = p.release.unwrap();
+        let d2 = Deposit {
+            release_id: args.release_id.clone(),
+            k_release: crate::seal::test_support::last_memory_deposit().unwrap(),
+            unlock_token: zeroize::Zeroizing::new([0u8; 32]),
+            window_secs: 90,
+        };
+        let mut fetch = MemoryFetch::serving(&d2);
+        fetch.set_expected_token(&args.unlock_token_b64);
+        let mut rq = open_req(res.package.clone(), d.path().join("r"));
+        rq.passphrase = Some(res.passphrase.as_ref().unwrap().as_secret());
+        let opened = open(&ks, rq, Box::new(fetch), &NoProgress).unwrap();
+        assert_eq!(opened.extract.files, 2);
+        assert!(opened.release.is_some());
     }
 
     fn fetch_set_token(f: &mut MemoryFetch, token: &str) {

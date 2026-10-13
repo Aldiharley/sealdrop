@@ -78,7 +78,10 @@ export default function Open({ active }: { active: boolean }) {
   const reqSeq = useRef(0);
 
   const timed = probe?.timed_release != null;
-  const needsPass = probe?.needs_passphrase ?? false;
+  // A timed package hides its passphrase stanza inside the release stanza; the manifest's
+  // inner kind tells (the core re-checks before contacting the service).
+  const needsPass =
+    (probe?.needs_passphrase ?? false) || probe?.inner_kind === "scrypt" || probe?.inner_kind === "argon2id";
   const hostName = hostOf(probe?.timed_release?.service) || (outcome?.kind === "ok" ? hostOf(outcome.v.release?.service) : "");
 
   function clearSecrets() {

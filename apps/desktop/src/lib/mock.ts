@@ -192,6 +192,7 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
       if (!path.endsWith(".sealdrop.age")) throw "not a sealdrop package";
       const out: T.ProbeOut = {
         needs_passphrase: isPassPath(path),
+        inner_kind: isPassPath(path) ? "scrypt" : "x25519",
         timed_release: isTimedPath(path) ? { service: SERVICE, release_id: "rel_8c1d4f" } : null,
       };
       return out;

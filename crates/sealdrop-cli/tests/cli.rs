@@ -465,6 +465,88 @@ fn timed_release_end_to_end_against_real_service() {
 }
 
 #[test]
+fn timed_release_with_passphrase_prompts_and_never_unlocks_without_it() {
+    let (service, token) = start_release_service();
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let outdir = d.path().join("b");
+    let out = cmd(&home)
+        .arg("seal")
+        .arg(fixture(d.path()))
+        .args([
+            "--passphrase",
+            "--kdf-profile",
+            "test",
+            "--expire-after",
+            "10m",
+            "--release-service",
+            &service,
+            "-o",
+        ])
+        .arg(&outdir)
+        .env("SEALDROP_RELEASE_TOKEN", &token)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let pass = text
+        .lines()
+        .find_map(|l| l.strip_prefix("passphrase:"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let pkg = outdir.join("report.sealdrop.age");
+
+    // No passphrase given: the CLI prompts (the header alone cannot show it), stdin is
+    // empty, and nothing reaches the service.
+    cmd(&home)
+        .arg("open")
+        .arg(&pkg)
+        .arg("-o")
+        .arg(d.path().join("r0"))
+        .write_stdin("")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("passphrase"));
+    cmd(&home)
+        .args(["receipt", "fetch"])
+        .arg(outdir.join("report.manifest.json"))
+        .env("SEALDROP_RELEASE_TOKEN", &token)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("not yet opened"));
+
+    // With the passphrase on stdin it opens through the service.
+    cmd(&home)
+        .arg("open")
+        .arg(&pkg)
+        .arg("-o")
+        .arg(d.path().join("r"))
+        .arg("--passphrase-stdin")
+        .write_stdin(format!("{pass}\n"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("first opened"));
+    assert_eq!(
+        std::fs::read(d.path().join("r/report/sub/b.html")).unwrap(),
+        b"<p>x</p>"
+    );
+    cmd(&home)
+        .args(["receipt", "fetch"])
+        .arg(outdir.join("report.manifest.json"))
+        .env("SEALDROP_RELEASE_TOKEN", &token)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unlock count: 1"));
+}
+
+#[test]
 fn seal_dot_uses_the_real_folder_name() {
     let d = tempfile::tempdir().unwrap();
     let home = d.path().join("home");

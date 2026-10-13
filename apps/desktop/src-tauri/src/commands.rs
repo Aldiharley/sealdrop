@@ -482,24 +482,36 @@ pub struct ProbeRelease {
 
 #[derive(Serialize)]
 pub struct ProbeOut {
+    /// True when opening needs a passphrase: a passphrase stanza in the header, or a timed
+    /// package whose manifest says the key inside is a passphrase.
     pub needs_passphrase: bool,
+    /// `recipients[0].kind` from the manifest beside the package, read WITHOUT verifying
+    /// it: it only decides whether to show the passphrase field. The core makes the real
+    /// check (before any network call) when the package is opened.
+    pub inner_kind: Option<String>,
     pub timed_release: Option<ProbeRelease>,
+}
+
+fn probe_impl(path: &Path) -> CmdResult<ProbeOut> {
+    use sealdrop_core::open::{is_passphrase_kind, unverified_inner_kind};
+    let p = sealdrop_core::probe::probe(path).map_err(ce)?;
+    let inner_kind = unverified_inner_kind(path);
+    let timed_passphrase =
+        p.release.is_some() && inner_kind.as_deref().is_some_and(is_passphrase_kind);
+    Ok(ProbeOut {
+        needs_passphrase: p.needs_passphrase || timed_passphrase,
+        inner_kind,
+        // The header is not signed: the service shown here is a claim until `verify`.
+        timed_release: p.release.map(|r| ProbeRelease {
+            service: r.service,
+            release_id: r.release_id,
+        }),
+    })
 }
 
 #[tauri::command]
 pub async fn probe(path: String) -> CmdResult<ProbeOut> {
-    blocking(move || {
-        let p = sealdrop_core::probe::probe(&abs(&path)?).map_err(ce)?;
-        Ok(ProbeOut {
-            needs_passphrase: p.needs_passphrase,
-            // The header is not signed: the service shown here is a claim until `verify`.
-            timed_release: p.release.map(|r| ProbeRelease {
-                service: r.service,
-                release_id: r.release_id,
-            }),
-        })
-    })
-    .await
+    blocking(move || probe_impl(&abs(&path)?)).await
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1282,6 +1294,85 @@ mod tests {
             .unlock("memory://x", "id", &d.unlock_token_b64())
             .unwrap();
         assert_eq!(remaining_secs(&u.expires_at, &u.now), Some(360));
+    }
+
+    /// Writes a timed-release package whose inner key is scrypt, plus an (unsigned) manifest
+    /// beside it that records that, as `seal` would. Returns the package path.
+    fn timed_scrypt_package(dir: &Path) -> PathBuf {
+        use sealdrop_core::manifest::{CiphertextInfo, Manifest, RecipientInfo, ReleaseInfo};
+        use sealdrop_core::release::{Deposit, Recipient as ReleaseRecipient};
+        use std::io::Write;
+        let d = Deposit::new(600);
+        let inner: Vec<Box<dyn age::Recipient + Send>> = vec![Box::new(
+            sealdrop_core::crypt::scrypt_recipient(SecretString::from("pass words"), 10).unwrap(),
+        )];
+        let service = "https://release.example";
+        let recipients: Vec<Box<dyn age::Recipient + Send>> =
+            vec![Box::new(ReleaseRecipient::new(inner, &d, service))];
+        let package = dir.join("t.sealdrop.age");
+        let f = std::fs::File::create(&package).unwrap();
+        let mut w = sealdrop_core::crypt::encrypt_writer(f, &recipients, false).unwrap();
+        w.write_all(b"not a tar; never decrypted here").unwrap();
+        w.finish().unwrap();
+        let m = Manifest {
+            format: sealdrop_core::manifest::MANIFEST_FORMAT.into(),
+            package_id: "11111111-2222-3333-4444-555555555555".into(),
+            tool: "test".into(),
+            created: "2026-10-13T09:00:00Z".into(),
+            ciphertext: CiphertextInfo {
+                file: "t.sealdrop.age".into(),
+                size: 0,
+                sha256: String::new(),
+            },
+            plaintext_tar_sha256: String::new(),
+            recipients: vec![RecipientInfo {
+                kind: "scrypt".into(),
+                fingerprint: String::new(),
+            }],
+            signer: String::new(),
+            classification: None,
+            expires: None,
+            release: Some(ReleaseInfo {
+                service: service.into(),
+                release_id: d.release_id.clone(),
+                window_secs: 600,
+                service_key: String::new(),
+            }),
+            notes: String::new(),
+        };
+        let (mpath, _) = sealdrop_core::seal::bundle_paths(&package);
+        std::fs::write(mpath, m.to_json().unwrap()).unwrap();
+        package
+    }
+
+    #[test]
+    fn timed_passphrase_package_shows_the_field_and_never_unlocks_without_it() {
+        struct NoNetwork;
+        impl sealdrop_core::release::ReleaseFetch for NoNetwork {
+            fn unlock(&self, _: &str, _: &str, _: &str) -> sealdrop_core::Result<Unlock> {
+                panic!("the release service must not be contacted");
+            }
+        }
+        let d = tempfile::tempdir().unwrap();
+        let package = timed_scrypt_package(d.path());
+        let p = probe_impl(&package).unwrap();
+        assert!(p.timed_release.is_some());
+        assert_eq!(p.inner_kind.as_deref(), Some("scrypt"));
+        assert!(p.needs_passphrase, "the Open screen must ask for it");
+
+        // Opening without a passphrase is refused by the core before any network call.
+        let ks = KeyStore::open(d.path().join("ks"));
+        ks.generate(false).unwrap();
+        let mut req = open_args(
+            &package.display().to_string(),
+            Some(&d.path().join("out")),
+            false,
+            None,
+        );
+        req.skip_verify = true;
+        let err = open_impl(&ks, req, Box::new(NoNetwork), &NoProgress).unwrap_err();
+        assert!(err.contains("needs a passphrase"), "{err}");
+        assert!(!d.path().join("out").exists());
     }
 
     #[test]

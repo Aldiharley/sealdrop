@@ -33,8 +33,13 @@ pub struct Args {
 pub fn run(a: Args) -> anyhow::Result<()> {
     let ks = crate::store();
     let p = sealdrop_core::probe::probe(&a.package)?;
+    // Kind of the key inside a timed package (its header cannot show a passphrase stanza):
+    // from the verified manifest, or under --skip-verify from the unverified one, which only
+    // decides whether to prompt; the core makes the same check before any network call.
+    let mut inner_kind: Option<String> = None;
     if let Some(h) = &p.release {
         if a.skip_verify {
+            inner_kind = sealdrop_core::open::unverified_inner_kind(&a.package);
             // Nothing in the header is signed, so never echo it raw: print only values that
             // pass the same validation the network code applies.
             let service = release::validate_service_url(&h.service)
@@ -61,6 +66,7 @@ pub fn run(a: Args) -> anyhow::Result<()> {
                 )
                 .into());
             }
+            inner_kind = v.manifest.recipients.first().map(|r| r.kind.clone());
             println!(
                 "This package uses timed release: {} after first open, enforced by {}",
                 super::human(r.window_secs),
@@ -71,7 +77,11 @@ pub fn run(a: Args) -> anyhow::Result<()> {
     }
     let passphrase = if a.passphrase_stdin {
         Some(read_line_secret()?)
-    } else if p.needs_passphrase {
+    } else if p.needs_passphrase
+        || inner_kind
+            .as_deref()
+            .is_some_and(sealdrop_core::open::is_passphrase_kind)
+    {
         eprint!("passphrase (typing is shown; use --passphrase-stdin to pipe it): ");
         Some(read_line_secret()?)
     } else {

@@ -52,7 +52,12 @@ export interface SealOut {
 }
 
 export interface ProbeOut {
+  /** True for a passphrase stanza in the header, or a timed package whose manifest says
+   *  the key inside is a passphrase. */
   needs_passphrase: boolean;
+  /** recipients[0].kind from the manifest beside the package, read unverified: only a hint
+   *  for showing the passphrase field ("scrypt" | "argon2id" | "x25519" | ...). */
+  inner_kind: string | null;
   timed_release: { service: string; release_id: string } | null;
 }
 
