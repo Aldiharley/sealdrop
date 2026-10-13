@@ -45,7 +45,9 @@ fn keygen_recipient_seal_verify_open() {
         .arg(&outdir)
         .assert()
         .success()
-        .stdout(predicate::str::contains("report.sealdrop.age"));
+        .stdout(predicate::str::contains("report.sealdrop.age"))
+        // The retention deadline only concerns timed packages.
+        .stdout(predicate::str::contains("retention").not());
     let pkg = outdir.join("report.sealdrop.age");
     assert!(outdir.join("report.manifest.json.minisig").exists());
 
@@ -304,6 +306,9 @@ fn timed_release_end_to_end_against_real_service() {
         ))
         .stdout(predicate::str::contains(
             "This does not protect the contents once decrypted.",
+        ))
+        .stdout(predicate::str::contains(
+            "If the package is never opened, the service forgets the key after its retention period (operator default: 90 days).",
         ));
     let m = std::fs::read_to_string(outdir.join("report.manifest.json")).unwrap();
     assert!(m.contains("\"window_secs\": 600"));

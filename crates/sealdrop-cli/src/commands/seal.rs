@@ -194,6 +194,7 @@ pub fn run(a: Args) -> anyhow::Result<()> {
             super::sanitize(&r.service)
         );
         out!("This does not protect the contents once decrypted.");
+        out!("If the package is never opened, the service forgets the key after its retention period (operator default: 90 days).");
     }
     if let Some(p) = &res.passphrase {
         out!("passphrase: {}", *p.joined());

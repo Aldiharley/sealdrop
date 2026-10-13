@@ -55,6 +55,9 @@ interface Sealed {
   folder: string;
 }
 
+// The release service purges never-opened deposits (see crates/sealdrop-release/README.md, Retention).
+const RETENTION_SENTENCE =
+  "If the package is never opened, the service forgets the key after its retention period (operator default: 90 days).";
 const TIMED_SENTENCE = (w: string) => `The recipient can open this only within ${w} after they first open it. This does not protect the contents once decrypted.`;
 
 export default function Seal({ active }: { active: boolean }) {
@@ -506,6 +509,7 @@ export default function Seal({ active }: { active: boolean }) {
                   <div style={{ fontWeight: 700 }}>Timed release: {w} after first open.</div>
                   <p style={{ margin: 0 }}>{TIMED_SENTENCE(w)}</p>
                   <p style={{ margin: 0 }}>Key placed with {sealed.host}. After it is first opened, check the receipt in Keys with this manifest.</p>
+                  <p style={{ margin: 0 }}>{RETENTION_SENTENCE}</p>
                 </div>
               </Tile>
             ) : null}

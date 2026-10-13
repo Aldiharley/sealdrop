@@ -473,6 +473,7 @@ Passphrase mode (the recipients area is replaced; the recipient list is kept in 
 | Timed tile text | The recipient can open this only within [window] after they first open it. This does not protect the contents once decrypted. |
 | Timed line | Timed release: [window] after first open. |
 | Timed tile extra | Key placed with [host]. After it is first opened, check the receipt in Keys with this manifest. |
+| Timed tile retention | If the package is never opened, the service forgets the key after its retention period (operator default: 90 days). (The service purges never-unlocked deposits; see `crates/sealdrop-release/README.md`, "Retention". The CLI prints the same sentence.) |
 
 **Error state** (a `notice--err` above the button, error glyph, text in `--ink`; the failing field also gets `aria-invalid`)
 
