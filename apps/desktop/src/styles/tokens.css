@@ -1,0 +1,68 @@
+:root {
+  --bg: #EEEBE6;
+  --bg-elev: #F4F2EE;
+  --ink: #3B3B40;
+  --muted: #8A8A92;
+  --pink: #E8A9AD;
+  --pink-deep: #D98B90;
+  --blue: #8FA4C9;
+  --blue-deep: #6F87B3;
+  --sage: #A8C9B8;
+  --sage-deep: #7FAE98;
+  --cream: #F3E7D3;
+  --danger: #D9777C;
+  --shadow-dark: rgba(163, 177, 198, 0.45);
+  --shadow-light: rgba(255, 255, 255, 0.9);
+  --radius-tile: 24px;
+  --radius-pill: 999px;
+  --radius-field: 16px;
+  --font: "Nunito Variable", "Nunito", system-ui, sans-serif;
+}
+
+/* ------------------------------------------------------------------
+   Additions from docs/design/brief.md (appended; the block above is the
+   fixed palette and is not modified).
+   ------------------------------------------------------------------ */
+:root {
+  /* Accessible companions to the fixed palette (contrast measured on --bg #EEEBE6):
+     --muted     #8A8A92  2.9:1  -> decoration, disabled text, icons only
+     --muted-ac  #62626B  5.1:1  -> helper text, labels, notes, placeholders
+     --danger    #D9777C  2.6:1  -> fills and glyphs only
+     --danger-ac #A8444A  4.9:1  -> error text
+     --blue-ac   #9DB0D2  ink text on it is 5.1:1 (ink on --blue is 4.4:1)
+     White text on --pink is 2.0:1 and on --blue is 2.5:1: never use white text on accents. */
+  --muted-ac: #62626B;
+  --danger-ac: #A8444A;
+  --danger-tint: #F2D3D4;
+  --blue-ac: #9DB0D2;
+
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+
+  /* 8-pt spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Type scale (Nunito). Body 15px is set on body in neu.css. */
+  --fs-title: 28px;   /* screen title, 700, line-height 36px */
+  --fs-h2: 20px;      /* tile title, 700, line-height 28px */
+  --fs-lead: 17px;    /* success headline, 700, line-height 24px */
+  --fs-body: 15px;    /* 400/600, line-height 22px */
+  --fs-label: 13px;   /* uppercase, tracking .08em, 600 */
+  --fs-note: 13px;    /* helper text, line-height 18px */
+  --fs-count: 28px;   /* countdown digits, 700 tabular */
+
+  /* Elevation recipes (same values as the given tile / pill / inset rules) */
+  --elev-tile: 8px 8px 18px var(--shadow-dark), -8px -8px 18px var(--shadow-light);
+  --elev-pill: 6px 6px 14px var(--shadow-dark), -6px -6px 14px var(--shadow-light);
+  --elev-inset: inset 4px 4px 10px var(--shadow-dark), inset -4px -4px 10px var(--shadow-light);
+
+  --focus-ring: 3px solid var(--blue-deep);   /* 3.0:1 against --bg */
+  --scrim: rgba(59, 59, 64, 0.35);
+}
