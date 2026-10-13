@@ -55,6 +55,8 @@ pub fn validate_service_url(s: &str) -> Result<String> {
     if authority.is_empty() {
         return Err(bad("missing host"));
     }
+    // `memory://` is the in-process test transport. ureq has no transport for the scheme
+    // (it rejects it), so it can never reach the network from `HttpFetch`/`deposit`.
     if scheme == "memory" {
         return Ok(format!("{scheme}://{}", rest.trim_end_matches('/')));
     }
@@ -98,10 +100,16 @@ pub fn validate_release_id(s: &str) -> Result<()> {
     }
 }
 
+/// Shared HTTP agent. Redirects are disabled on purpose: the service URL is validated
+/// (https, or loopback http), and following a 3xx from an attacker-named host could land on
+/// a plain-http or internal address (for example a cloud metadata endpoint) and bypass that
+/// check. With `max_redirects(0)` a 3xx is returned as-is, and every caller below requires an
+/// exact success status, so a redirect is always an error.
 fn agent() -> ureq::Agent {
     ureq::Agent::new_with_config(
         ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(30)))
+            .max_redirects(0)
             .build(),
     )
 }
@@ -355,7 +363,13 @@ impl ReleaseFetch for HttpFetch {
             unlock_token: unlock_token_b64,
         });
         let mut res = match res {
-            Ok(r) => r,
+            Ok(r) if r.status().as_u16() == 200 => r,
+            Ok(r) => {
+                return Err(Error::Release(format!(
+                    "unexpected status {}",
+                    r.status().as_u16()
+                )))
+            }
             Err(ureq::Error::StatusCode(410)) => return Err(Error::ReleaseExpired),
             Err(ureq::Error::StatusCode(403)) => {
                 return Err(Error::Release("unlock token rejected".into()))
@@ -534,6 +548,12 @@ pub fn fetch_receipt(service: &str, token: &str, release_id: &str) -> Result<Sig
         .header("Authorization", &format!("Bearer {token}"))
         .call()
         .map_err(|e| Error::Release(format!("receipt fetch failed: {e}")))?;
+    if res.status().as_u16() != 200 {
+        return Err(Error::Release(format!(
+            "receipt fetch failed: unexpected status {}",
+            res.status().as_u16()
+        )));
+    }
     res.body_mut()
         .read_json()
         .map_err(|e| Error::Release(e.to_string()))
@@ -858,6 +878,37 @@ mod tests {
         let real = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
         assert!(verify_receipt(&forged, Some(&real.pk.to_base64())).is_err());
         assert!(verify_receipt_for(&forged, &real.pk.to_base64(), "rid", "abc").is_err());
+    }
+
+    #[test]
+    fn http_client_never_follows_redirects() {
+        use std::net::TcpListener;
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let tport = target.local_addr().unwrap().port();
+        let front = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fport = front.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut c, _) = front.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = c.read(&mut buf);
+            let resp = format!(
+                "HTTP/1.1 302 Found
+Location: http://127.0.0.1:{tport}/x
+Content-Length: 0
+Connection: close
+
+"
+            );
+            c.write_all(resp.as_bytes()).unwrap();
+        });
+        let res = HttpFetch.unlock(&format!("http://127.0.0.1:{fport}"), UUID, "dG9r");
+        server.join().unwrap();
+        assert!(matches!(res, Err(Error::Release(_))));
+        assert!(
+            target.accept().is_err(),
+            "redirect target must never be contacted"
+        );
     }
 
     #[test]
