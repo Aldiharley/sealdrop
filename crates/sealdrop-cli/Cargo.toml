@@ -1,0 +1,33 @@
+[package]
+name = "sealdrop-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "sealdrop command-line tool"
+
+[[bin]]
+name = "sealdrop"
+path = "src/main.rs"
+
+[dependencies]
+sealdrop-core = { path = "../sealdrop-core" }
+age.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+qrcode = "0.14"
+serde_json.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+# The timed-release e2e test runs the real key-release service in-process (Task 12),
+# so no crate enables sealdrop-core's `test-support` feature and the production
+# rejection of `memory://` stays under test in `cargo test --workspace`.
+sealdrop-release = { path = "../sealdrop-release" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+axum = "0.8"
+minisign.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+bech32 = "0.11"
