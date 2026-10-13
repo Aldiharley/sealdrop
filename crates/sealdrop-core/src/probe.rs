@@ -39,15 +39,25 @@ pub fn probe(path: &Path) -> Result<Probe> {
 pub fn probe_bytes(buf: &[u8]) -> Result<Probe> {
     let armored = buf.starts_with(b"-----BEGIN AGE ENCRYPTED FILE-----");
     let text: Vec<u8> = if armored {
-        let s = String::from_utf8_lossy(buf);
+        // Work on bytes: the input is untrusted and may be cut off at any point.
         let mut ended = false;
-        let mut body = String::new();
-        for line in s.lines().skip(1) {
-            if line.starts_with("-----END") {
+        let mut body: Vec<u8> = Vec::new();
+        for line in buf.split(|b| *b == b'\n').skip(1) {
+            let line = line.trim_ascii();
+            if line.starts_with(b"-") {
+                // `-----END AGE ENCRYPTED FILE-----`, or a cut-off prefix of it.
                 ended = true;
                 break;
             }
-            body.push_str(line.trim());
+            if !line
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+            {
+                return Err(Error::Other(
+                    "armor body contains invalid characters".into(),
+                ));
+            }
+            body.extend_from_slice(line);
         }
         if !ended {
             // The input was cut off mid-armor (a long file read only up to HEADER_MAX):
@@ -55,8 +65,8 @@ pub fn probe_bytes(buf: &[u8]) -> Result<Probe> {
             body.truncate(body.len() / 4 * 4);
         }
         BASE64_STANDARD
-            .decode(body.as_bytes())
-            .or_else(|_| BASE64_STANDARD_NO_PAD.decode(body.as_bytes()))
+            .decode(&body)
+            .or_else(|_| BASE64_STANDARD_NO_PAD.decode(&body))
             .map_err(|_| Error::Other("armor decode failed".into()))?
     } else {
         buf.to_vec()
@@ -67,7 +77,7 @@ pub fn probe_bytes(buf: &[u8]) -> Result<Probe> {
         return Err(Error::Other("age header too large".into()));
     }
     let header = String::from_utf8_lossy(&text[..end]);
-    if !header.starts_with("age-encryption.org/v1") {
+    if header.split('\n').next() != Some("age-encryption.org/v1") {
         return Err(Error::Other("not an age file".into()));
     }
     let mut tags = Vec::new();
@@ -168,5 +178,54 @@ mod tests {
 ---"
         )
         .is_err());
+    }
+
+    #[test]
+    fn armored_body_with_non_ascii_is_an_error_not_a_panic() {
+        let junk = "-----BEGIN AGE ENCRYPTED FILE-----\nabc\u{e9}\n".as_bytes();
+        assert!(probe_bytes(junk).is_err());
+        let junk2 = "-----BEGIN AGE ENCRYPTED FILE-----\nab!d\n".as_bytes();
+        assert!(probe_bytes(junk2).is_err());
+    }
+
+    fn b64(s: &str) -> String {
+        BASE64_STANDARD_NO_PAD.encode(s.as_bytes())
+    }
+
+    #[test]
+    fn parses_release_stanza() {
+        let svc = b64("https://r.example/api");
+        let h = format!("age-encryption.org/v1\n-> sealdrop-release rid-1 {svc} bm9uY2U dG9rZW4\nAAAA\n--- bWFj\n");
+        let p = probe_bytes(h.as_bytes()).unwrap();
+        assert_eq!(p.tags, vec!["sealdrop-release"]);
+        let r = p.release.unwrap();
+        assert_eq!(r.release_id, "rid-1");
+        assert_eq!(r.service, "https://r.example/api");
+        assert_eq!(r.nonce_b64, "bm9uY2U");
+        assert_eq!(r.unlock_token_b64, "dG9rZW4");
+        assert!(!p.needs_passphrase);
+    }
+
+    #[test]
+    fn release_stanza_with_wrong_arity_is_ignored_but_listed() {
+        let svc = b64("https://r.example");
+        let h = format!(
+            "age-encryption.org/v1\n-> sealdrop-release rid-1 {svc} bm9uY2U\nAAAA\n--- bWFj\n"
+        );
+        let p = probe_bytes(h.as_bytes()).unwrap();
+        assert_eq!(p.tags, vec!["sealdrop-release"]);
+        assert!(p.release.is_none());
+    }
+
+    #[test]
+    fn release_stanza_with_bad_service_base64_is_an_error() {
+        let h = "age-encryption.org/v1\n-> sealdrop-release rid-1 !!notb64!! bm9uY2U dG9rZW4\nAAAA\n--- bWFj\n";
+        assert!(probe_bytes(h.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn first_header_line_must_match_exactly() {
+        let h = "age-encryption.org/v1x\n-> X25519 abc\nAAAA\n--- bWFj\n";
+        assert!(probe_bytes(h.as_bytes()).is_err());
     }
 }

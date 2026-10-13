@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 use age::secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::{Error, Result};
 
@@ -65,10 +66,24 @@ pub struct KeyStore {
     dir: PathBuf,
 }
 
-/// Write a file that only the owner can read. On Unix the file is created with mode 0600
-/// (so there is no window where it is world-readable) and the mode is re-asserted for
-/// files that already existed.
+/// Trusted-signer names are file stems; allow-list them (`^[A-Za-z0-9_-]{1,64}$`).
+fn valid_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// Write a file that only the owner can read, atomically. The contents go to `<path>.tmp`,
+/// created with mode 0600 on Unix (no world-readable window), and are then renamed over
+/// `path`, so an interrupted write never leaves a truncated key file.
 fn write_private(path: &Path, contents: &str) -> Result<()> {
+    let mut tmp_name = path
+        .file_name()
+        .ok_or_else(|| Error::KeyStore("bad path".into()))?
+        .to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
     #[cfg(unix)]
     let mut file = {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -77,7 +92,7 @@ fn write_private(path: &Path, contents: &str) -> Result<()> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(path)?;
+            .open(&tmp)?;
         f.set_permissions(fs::Permissions::from_mode(0o600))?;
         f
     };
@@ -86,10 +101,16 @@ fn write_private(path: &Path, contents: &str) -> Result<()> {
         .write(true)
         .create(true)
         .truncate(true)
-        .open(path)?;
-    file.write_all(contents.as_bytes())?;
-    file.flush()?;
-    Ok(())
+        .open(&tmp)?;
+    let written = file
+        .write_all(contents.as_bytes())
+        .and_then(|_| file.sync_all());
+    drop(file);
+    let result = written.and_then(|_| fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    Ok(result?)
 }
 
 impl KeyStore {
@@ -128,7 +149,7 @@ impl KeyStore {
     }
 
     pub fn generate(&self, force: bool) -> Result<KeyInfo> {
-        if self.exists() && !force {
+        if (self.identity_path().exists() || self.sign_key_path().exists()) && !force {
             return Err(Error::KeyStore(format!(
                 "identity already exists in {}; use --force to replace",
                 self.dir.display()
@@ -143,7 +164,7 @@ impl KeyStore {
         let id = age::x25519::Identity::generate();
         let recipient = id.to_public().to_string();
         let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
-        let body = zeroize::Zeroizing::new(format!(
+        let body = Zeroizing::new(format!(
             "# created: {created}\n# public key: {recipient}\n{}\n",
             id.to_string().expose_secret()
         ));
@@ -155,7 +176,8 @@ impl KeyStore {
             .sk
             .to_box(Some("sealdrop signing key"))
             .map_err(|e| Error::KeyStore(e.to_string()))?;
-        write_private(&self.sign_key_path(), &sk_box.into_string())?;
+        let sk_text = Zeroizing::new(sk_box.into_string());
+        write_private(&self.sign_key_path(), &sk_text)?;
         let pk_box = kp.pk.to_box().map_err(|e| Error::KeyStore(e.to_string()))?;
         fs::write(self.sign_pub_path(), pk_box.into_string())?;
         Ok(KeyInfo {
@@ -164,29 +186,32 @@ impl KeyStore {
         })
     }
 
-    fn identity_lines(&self) -> Result<Vec<String>> {
-        let text = zeroize::Zeroizing::new(
+    /// Non-comment lines of the identity file. They are secrets (age secret key, plugin
+    /// identities), so each is zeroized on drop.
+    fn identity_lines(&self) -> Result<Vec<Zeroizing<String>>> {
+        let text = Zeroizing::new(
             fs::read_to_string(self.identity_path())
                 .map_err(|_| Error::KeyStore("no identity; run `sealdrop keygen`".into()))?,
         );
         Ok(text
             .lines()
-            .map(|l| l.trim().to_string())
+            .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(|l| Zeroizing::new(l.to_string()))
             .collect())
     }
 
     pub fn identity(&self) -> Result<age::x25519::Identity> {
-        let line = self
-            .identity_lines()?
-            .into_iter()
+        let lines = self.identity_lines()?;
+        let line = lines
+            .iter()
             .find(|l| l.starts_with("AGE-SECRET-KEY-1"))
             .ok_or(Error::InvalidIdentity)?;
-        age::x25519::Identity::from_str(&line).map_err(|_| Error::InvalidIdentity)
+        age::x25519::Identity::from_str(line).map_err(|_| Error::InvalidIdentity)
     }
 
     /// Lines starting with `AGE-PLUGIN-` (hardware identities the user added by hand).
-    pub fn plugin_identity_lines(&self) -> Result<Vec<String>> {
+    pub fn plugin_identity_lines(&self) -> Result<Vec<Zeroizing<String>>> {
         Ok(self
             .identity_lines()?
             .into_iter()
@@ -199,8 +224,10 @@ impl KeyStore {
     }
 
     pub fn signing_key(&self) -> Result<minisign::SecretKey> {
-        let s = fs::read_to_string(self.sign_key_path())
-            .map_err(|_| Error::KeyStore("no signing key".into()))?;
+        let s = Zeroizing::new(
+            fs::read_to_string(self.sign_key_path())
+                .map_err(|_| Error::KeyStore("no signing key".into()))?,
+        );
         minisign::SecretKeyBox::from_string(&s)
             .and_then(|b| b.into_unencrypted_secret_key())
             .map_err(|e| Error::KeyStore(e.to_string()))
@@ -239,7 +266,7 @@ impl KeyStore {
     }
 
     pub fn add_trusted(&self, name: &str, pk_b64: &str) -> Result<()> {
-        if name.is_empty() || name.contains(['/', '\\', '.']) {
+        if !valid_name(name) {
             return Err(Error::KeyStore("invalid trusted name".into()));
         }
         minisign::PublicKey::from_base64(pk_b64.trim())
@@ -253,7 +280,7 @@ impl KeyStore {
     }
 
     pub fn remove_trusted(&self, name: &str) -> Result<()> {
-        if name.is_empty() || name.contains(['/', '\\', '.']) {
+        if !valid_name(name) {
             return Err(Error::KeyStore("invalid trusted name".into()));
         }
         fs::remove_file(self.trusted_dir().join(format!("{name}.pub")))?;
@@ -352,5 +379,79 @@ mod tests {
         let pk = ks.signing_public().unwrap();
         let sig = crate::manifest::sign(b"m", &sk, &pk, "id").unwrap();
         crate::manifest::verify(b"m", &sig, &pk).unwrap();
+    }
+
+    #[test]
+    fn generate_refuses_to_overwrite_lone_identity() {
+        let d = tempfile::tempdir().unwrap();
+        let ks = KeyStore::open(d.path().join("store"));
+        std::fs::create_dir_all(ks.dir()).unwrap();
+        let path = ks.dir().join("identity.txt");
+        std::fs::write(&path, "AGE-SECRET-KEY-1PRECIOUS\n").unwrap();
+        assert!(ks.generate(false).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "AGE-SECRET-KEY-1PRECIOUS\n"
+        );
+        // A lone sign.key is protected too.
+        let d2 = tempfile::tempdir().unwrap();
+        let ks2 = KeyStore::open(d2.path().join("store"));
+        std::fs::create_dir_all(ks2.dir()).unwrap();
+        std::fs::write(ks2.dir().join("sign.key"), "precious").unwrap();
+        assert!(ks2.generate(false).is_err());
+        assert_eq!(
+            std::fs::read_to_string(ks2.dir().join("sign.key")).unwrap(),
+            "precious"
+        );
+    }
+
+    #[test]
+    fn generate_leaves_no_tmp_files() {
+        let d = tempfile::tempdir().unwrap();
+        let ks = KeyStore::open(d.path().join("store"));
+        ks.generate(false).unwrap();
+        ks.generate(true).unwrap();
+        ks.save_settings(&Settings::default()).unwrap();
+        let mut names: Vec<String> = std::fs::read_dir(ks.dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["identity.txt", "settings.json", "sign.key", "sign.pub"]
+        );
+    }
+
+    #[test]
+    fn trusted_names_are_allow_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let ks = KeyStore::open(d.path().join("store"));
+        let info = ks.generate(false).unwrap();
+        let backslash = String::from_utf8(vec![b'a', 92, b'b']).unwrap();
+        for bad in [
+            "C:x",
+            "..",
+            ".",
+            "",
+            "a/b",
+            backslash.as_str(),
+            "a.b",
+            "x y",
+            "a".repeat(65).as_str(),
+        ] {
+            assert!(ks.add_trusted(bad, &info.signer).is_err(), "{bad:?}");
+            assert!(ks.remove_trusted(bad).is_err(), "{bad:?}");
+        }
+        assert!(!ks.dir().join("trusted").exists());
+        let mut names: Vec<String> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["store"]);
+        ks.add_trusted("Alice_1-b", &info.signer).unwrap();
+        assert_eq!(ks.trusted().unwrap()[0].0, "Alice_1-b");
+        ks.remove_trusted("Alice_1-b").unwrap();
     }
 }
