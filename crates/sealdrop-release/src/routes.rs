@@ -28,12 +28,15 @@ pub async fn rate_limit(State(st): State<AppState>, req: Request, next: Next) ->
 }
 
 fn bearer(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("authorization")?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .map(|s| s.trim().to_string())
+    let v = headers.get("authorization")?.to_str().ok()?;
+    let (scheme, token) = v.split_once(' ')?;
+    scheme
+        .eq_ignore_ascii_case("bearer")
+        .then(|| token.trim().to_string())
+}
+
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[derive(Deserialize)]
@@ -63,13 +66,25 @@ pub async fn deposit(
     if id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return (StatusCode::BAD_REQUEST, "bad id").into_response();
     }
-    if b.k_release.len() > 64
-        || b.unlock_token_hash.len() != 64
-        || b.package_sha256.len() > 64
-        || b.window_secs == 0
-        || b.window_secs > 366 * 86_400
-    {
-        return (StatusCode::BAD_REQUEST, "bad fields").into_response();
+    let key_ok = base64::Engine::decode(&base64::prelude::BASE64_STANDARD_NO_PAD, &b.k_release)
+        .map(|k| k.len() == 32)
+        .unwrap_or(false);
+    if !key_ok {
+        return (
+            StatusCode::BAD_REQUEST,
+            "k_release must be 32 bytes, base64 without padding",
+        )
+            .into_response();
+    }
+    if !is_hex64(&b.unlock_token_hash) || !is_hex64(&b.package_sha256) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "unlock_token_hash and package_sha256 must be 64 lowercase hex characters",
+        )
+            .into_response();
+    }
+    if b.window_secs == 0 || b.window_secs > 366 * 86_400 {
+        return (StatusCode::BAD_REQUEST, "bad window_secs").into_response();
     }
     match st.db.insert_release(
         &id,
@@ -77,7 +92,7 @@ pub async fn deposit(
         b.window_secs as i64,
         &b.unlock_token_hash,
         &b.package_sha256,
-        &st.clock.now_rfc3339(),
+        st.clock.now_unix(),
     ) {
         // The sender records this key in the manifest and pins receipts to it.
         Ok(true) => (

@@ -5,6 +5,9 @@ use sealdrop_release::db::Db;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+const PKG: &str = "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12";
+const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
 fn server() -> (TestServer, AppState, Arc<FixedClock>, String) {
     let clock = Arc::new(FixedClock::new("2026-10-13T09:00:00Z"));
     let db = Db::open_memory().unwrap();
@@ -22,7 +25,7 @@ async fn deposit(s: &TestServer, token: &str) {
             "k_release": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "window_secs": 600,
             "unlock_token_hash": sealdrop_core::hashing::sha256_hex(b"tok"),
-            "package_sha256": "ab"
+            "package_sha256": PKG
         }))
         .await;
     assert_eq!(r.status_code(), 201, "{}", r.text());
@@ -54,10 +57,10 @@ async fn second_deposit_for_same_id_conflicts() {
         .put("/v1/releases/r1")
         .add_header("authorization", format!("Bearer {token}"))
         .json(&json!({
-            "k_release": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            "k_release": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA",
             "window_secs": 600,
             "unlock_token_hash": sealdrop_core::hashing::sha256_hex(b"tok"),
-            "package_sha256": "ab"
+            "package_sha256": PKG
         }))
         .await;
     assert_eq!(r.status_code(), 409);
@@ -167,4 +170,111 @@ async fn oversized_body_is_rejected() {
         .json(&json!({"k_release": "x".repeat(20_000), "window_secs": 600, "unlock_token_hash": "", "package_sha256": ""}))
         .await;
     assert_eq!(r.status_code(), 413);
+}
+
+fn good() -> Value {
+    json!({
+        "k_release": KEY,
+        "window_secs": 600,
+        "unlock_token_hash": sealdrop_core::hashing::sha256_hex(b"tok"),
+        "package_sha256": PKG
+    })
+}
+
+async fn put_with(s: &TestServer, token: &str, id: &str, body: &Value) -> u16 {
+    s.put(&format!("/v1/releases/{id}"))
+        .add_header("authorization", format!("Bearer {token}"))
+        .json(body)
+        .await
+        .status_code()
+        .as_u16()
+}
+
+#[tokio::test]
+async fn deposit_validates_k_release() {
+    let (s, _, _, token) = server();
+    for (i, bad) in [
+        "",
+        "AAAA",
+        // 33 bytes
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        // 32 bytes but padded
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "not base64 !!!not base64 !!!not base64 !!!!!",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut b = good();
+        b["k_release"] = json!(bad);
+        assert_eq!(
+            put_with(&s, &token, &format!("k{i}"), &b).await,
+            400,
+            "{bad:?}"
+        );
+    }
+    assert_eq!(put_with(&s, &token, "ok", &good()).await, 201);
+}
+
+#[tokio::test]
+async fn deposit_validates_hashes() {
+    let (s, _, _, token) = server();
+    let up = sealdrop_core::hashing::sha256_hex(b"tok").to_uppercase();
+    for (field, bad) in [
+        ("unlock_token_hash", json!("ab")),
+        ("unlock_token_hash", json!(up)),
+        ("unlock_token_hash", json!("g".repeat(64))),
+        ("unlock_token_hash", json!("a".repeat(65))),
+        ("package_sha256", json!("ab")),
+        ("package_sha256", json!("")),
+        ("package_sha256", json!(PKG.to_uppercase())),
+        ("package_sha256", json!("z".repeat(64))),
+    ] {
+        let mut b = good();
+        b[field] = bad.clone();
+        assert_eq!(put_with(&s, &token, "h1", &b).await, 400, "{field}={bad}");
+    }
+    assert_eq!(put_with(&s, &token, "h1", &good()).await, 201);
+}
+
+#[tokio::test]
+async fn bearer_scheme_is_case_insensitive() {
+    let (s, _, _, token) = server();
+    deposit(&s, &token).await;
+    for scheme in ["bearer", "BEARER", "Bearer"] {
+        let r = s
+            .get("/v1/releases/r1/receipt")
+            .add_header("authorization", format!("{scheme} {token}"))
+            .await;
+        assert_eq!(r.status_code(), 200, "{scheme}");
+    }
+    let r = s
+        .get("/v1/releases/r1/receipt")
+        .add_header("authorization", format!("Basic {token}"))
+        .await;
+    assert_eq!(r.status_code(), 401);
+}
+
+#[tokio::test]
+async fn never_unlocked_deposits_are_purged_after_retention() {
+    let (s, state, clock, token) = server();
+    deposit(&s, &token).await;
+    // Not yet 90 days: untouched.
+    clock.advance_secs(89 * 86_400);
+    assert_eq!(state.db.sweep_expired(clock_now(&state)).unwrap(), 0);
+    assert!(state
+        .db
+        .get_release("r1")
+        .unwrap()
+        .unwrap()
+        .k_release
+        .is_some());
+    // Past 90 days since creation, never unlocked: key and row gone.
+    clock.advance_secs(2 * 86_400);
+    assert_eq!(state.db.sweep_expired(clock_now(&state)).unwrap(), 1);
+    assert!(state.db.get_release("r1").unwrap().is_none());
+}
+
+fn clock_now(state: &AppState) -> i64 {
+    state.clock.now_unix()
 }

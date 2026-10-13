@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -5,6 +6,7 @@ use clap::{Parser, Subcommand};
 use sealdrop_release::app::{build, AppState};
 use sealdrop_release::clock::SystemClock;
 use sealdrop_release::db::Db;
+use sealdrop_release::fsutil;
 
 #[derive(Parser)]
 #[command(
@@ -23,6 +25,9 @@ enum Cmd {
     Keygen {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        /// Replace existing service.key / service.pub (senders must re-pin the new service key)
+        #[arg(long)]
+        force: bool,
     },
     /// Create a deposit token for a sender; prints it once
     Token {
@@ -37,9 +42,14 @@ enum Cmd {
         db: String,
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        /// Burst size of the per-address rate limiter (the limiter keys on the TCP peer address)
         #[arg(long, default_value_t = 60)]
         rate_capacity: u32,
-        #[arg(long, default_value_t = 90)]
+        /// Requests per second the rate limiter refills per address
+        #[arg(long, default_value_t = sealdrop_release::app::DEFAULT_REFILL_PER_SEC, value_parser = parse_refill)]
+        rate_refill_per_sec: f64,
+        /// Days to keep release records (and never-unlocked deposits) before purging
+        #[arg(long, default_value_t = 90, value_parser = clap::value_parser!(i64).range(1..=3650))]
         retention_days: i64,
     },
 }
@@ -51,6 +61,41 @@ enum TokenCmd {
         #[arg(long, default_value = "releases.db")]
         db: String,
     },
+}
+
+fn parse_refill(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
+    if v.is_finite() && v > 0.0 && v <= 1_000_000.0 {
+        Ok(v)
+    } else {
+        Err("must be greater than 0 and at most 1000000".into())
+    }
+}
+
+/// Writes the signing key pair owner-only, refusing to overwrite unless `force`.
+fn write_keys(dir: &std::path::Path, force: bool) -> anyhow::Result<minisign::PublicKey> {
+    let key_path = dir.join("service.key");
+    let pub_path = dir.join("service.pub");
+    if !force {
+        for p in [&key_path, &pub_path] {
+            if p.exists() {
+                anyhow::bail!("{} already exists; pass --force to replace it", p.display());
+            }
+        }
+    }
+    let kp = minisign::KeyPair::generate_unencrypted_keypair()?;
+    let key_text = kp.sk.to_box(Some("sealdrop-release"))?.into_string();
+    let pub_text = kp.pk.to_box()?.into_string();
+    let open = |p: &std::path::Path| {
+        if force {
+            fsutil::create_or_replace_private(p)
+        } else {
+            fsutil::create_new_private(p)
+        }
+    };
+    open(&key_path)?.write_all(key_text.as_bytes())?;
+    open(&pub_path)?.write_all(pub_text.as_bytes())?;
+    Ok(kp.pk)
 }
 
 fn load_signer(dir: &std::path::Path) -> anyhow::Result<minisign::KeyPair> {
@@ -66,17 +111,14 @@ fn load_signer(dir: &std::path::Path) -> anyhow::Result<minisign::KeyPair> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
         .init();
     match Cli::parse().cmd {
-        Cmd::Keygen { dir } => {
-            let kp = minisign::KeyPair::generate_unencrypted_keypair()?;
-            std::fs::write(
-                dir.join("service.key"),
-                kp.sk.to_box(Some("sealdrop-release"))?.into_string(),
-            )?;
-            std::fs::write(dir.join("service.pub"), kp.pk.to_box()?.into_string())?;
-            println!("service key: {}", kp.pk.to_base64());
+        Cmd::Keygen { dir, force } => {
+            let pk = write_keys(&dir, force)?;
+            println!("service key: {}", pk.to_base64());
         }
         Cmd::Token {
             cmd: TokenCmd::New { name, db },
@@ -90,22 +132,29 @@ async fn main() -> anyhow::Result<()> {
             db,
             dir,
             rate_capacity,
+            rate_refill_per_sec,
             retention_days,
         } => {
             let db = Db::open(&db)?;
-            let state = AppState::new(db, Arc::new(SystemClock), load_signer(&dir)?, rate_capacity);
+            let state = AppState::with_rate(
+                db,
+                Arc::new(SystemClock),
+                load_signer(&dir)?,
+                rate_capacity,
+                rate_refill_per_sec,
+            );
             let sweeper = state.clone();
             tokio::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
-                    if let Ok(n) = sweeper
+                    match sweeper
                         .db
                         .sweep_expired_unix(sweeper.clock.now_unix(), retention_days)
                     {
-                        if n > 0 {
-                            tracing::info!(deleted_keys = n, "sweep");
-                        }
+                        Ok(0) => {}
+                        Ok(n) => tracing::info!(deleted_keys = n, "sweep"),
+                        Err(e) => tracing::warn!(error = %e, "sweep failed"),
                     }
                 }
             });

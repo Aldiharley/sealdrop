@@ -1,7 +1,7 @@
 FROM rust:1.90-bookworm AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release -p sealdrop-release
+RUN cargo build --release --locked -p sealdrop-release
 FROM debian:bookworm-slim
 RUN useradd -r -u 10001 sealdrop && mkdir /data && chown sealdrop /data
 COPY --from=build /src/target/release/sealdrop-release /usr/local/bin/

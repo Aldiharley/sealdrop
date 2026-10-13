@@ -5,6 +5,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// Above this many tracked addresses, buckets idle for longer than `IDLE_EVICT` are dropped.
+const MAX_BUCKETS: usize = 10_000;
+const IDLE_EVICT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 pub struct Limiter {
     capacity: AtomicU32,
     refill_per_sec: f64,
@@ -30,6 +34,9 @@ impl Limiter {
         let cap = self.capacity.load(Ordering::SeqCst) as f64;
         let mut b = self.buckets.lock().unwrap();
         let now = Instant::now();
+        if b.len() > MAX_BUCKETS {
+            b.retain(|_, (_, last)| now.duration_since(*last) <= IDLE_EVICT);
+        }
         let (tokens, last) = b.entry(ip).or_insert((cap, now));
         *tokens =
             (*tokens + now.duration_since(*last).as_secs_f64() * self.refill_per_sec).min(cap);

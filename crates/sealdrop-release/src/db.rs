@@ -12,6 +12,7 @@ pub struct ReleaseRow {
     pub unlock_token_hash: String,
     pub package_sha256: String,
     pub created: String,
+    pub created_unix: i64,
     pub first_unlock: Option<String>,
     pub expires_at: Option<String>,
     pub expires_unix: Option<i64>,
@@ -22,13 +23,18 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS releases (
   release_id TEXT PRIMARY KEY, k_release TEXT, window_secs INTEGER NOT NULL,
   unlock_token_hash TEXT NOT NULL, package_sha256 TEXT NOT NULL, created TEXT NOT NULL,
+  created_unix INTEGER NOT NULL,
   first_unlock TEXT, expires_at TEXT, expires_unix INTEGER, unlock_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tokens (name TEXT PRIMARY KEY, hash TEXT NOT NULL, created TEXT NOT NULL);
 ";
 
 impl Db {
+    /// Opens (creating, owner-only on Unix) the database file at `path`.
     pub fn open(path: &str) -> anyhow::Result<Self> {
+        if path != ":memory:" {
+            crate::fsutil::ensure_private(std::path::Path::new(path))?;
+        }
         Self::init(Connection::open(path)?)
     }
 
@@ -37,6 +43,8 @@ impl Db {
     }
 
     fn init(c: Connection) -> anyhow::Result<Self> {
+        // Overwrite freed pages so removed release keys do not linger in the file.
+        c.execute_batch("PRAGMA secure_delete = ON;")?;
         c.execute_batch(SCHEMA)?;
         Ok(Self(Mutex::new(c)))
     }
@@ -72,11 +80,19 @@ impl Db {
         window: i64,
         token_hash: &str,
         pkg: &str,
-        now: &str,
+        now_unix: i64,
     ) -> anyhow::Result<bool> {
         let n = self.0.lock().unwrap().execute(
-            "INSERT OR IGNORE INTO releases(release_id, k_release, window_secs, unlock_token_hash, package_sha256, created) VALUES (?1,?2,?3,?4,?5,?6)",
-            params![id, k, window, token_hash, pkg, now],
+            "INSERT OR IGNORE INTO releases(release_id, k_release, window_secs, unlock_token_hash, package_sha256, created, created_unix) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                id,
+                k,
+                window,
+                token_hash,
+                pkg,
+                crate::clock::fmt_unix(now_unix),
+                now_unix
+            ],
         )?;
         Ok(n == 1)
     }
@@ -87,7 +103,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row(
-                "SELECT release_id, k_release, window_secs, unlock_token_hash, package_sha256, created, first_unlock, expires_at, expires_unix, unlock_count FROM releases WHERE release_id = ?1",
+                "SELECT release_id, k_release, window_secs, unlock_token_hash, package_sha256, created, created_unix, first_unlock, expires_at, expires_unix, unlock_count FROM releases WHERE release_id = ?1",
                 params![id],
                 |r| {
                     Ok(ReleaseRow {
@@ -97,10 +113,11 @@ impl Db {
                         unlock_token_hash: r.get(3)?,
                         package_sha256: r.get(4)?,
                         created: r.get(5)?,
-                        first_unlock: r.get(6)?,
-                        expires_at: r.get(7)?,
-                        expires_unix: r.get(8)?,
-                        unlock_count: r.get(9)?,
+                        created_unix: r.get(6)?,
+                        first_unlock: r.get(7)?,
+                        expires_at: r.get(8)?,
+                        expires_unix: r.get(9)?,
+                        unlock_count: r.get(10)?,
                     })
                 },
             )
@@ -138,8 +155,9 @@ impl Db {
         Ok(())
     }
 
-    /// Deletes keys for every release whose window has passed (rows are kept for receipts
-    /// and purged after 90 days). Returns the number of keys deleted.
+    /// Removes the key of every release whose window has passed (rows are kept for receipts
+    /// and purged after 90 days), and purges releases that were never unlocked once they are
+    /// 90 days old. Returns the number of keys removed.
     pub fn sweep_expired(&self, now_unix: i64) -> anyhow::Result<usize> {
         self.sweep_expired_unix(now_unix, 90)
     }
@@ -150,10 +168,16 @@ impl Db {
             "UPDATE releases SET k_release = NULL WHERE k_release IS NOT NULL AND expires_unix IS NOT NULL AND expires_unix <= ?1",
             params![now_unix],
         )?;
-        c.execute(
-            "DELETE FROM releases WHERE expires_unix IS NOT NULL AND expires_unix <= ?1",
-            params![now_unix - retention_days * 86_400],
+        let cutoff = now_unix - retention_days * 86_400;
+        // Never-unlocked releases: remove the key, then the row, `retention_days` after creation.
+        let orphans = c.execute(
+            "UPDATE releases SET k_release = NULL WHERE k_release IS NOT NULL AND first_unlock IS NULL AND created_unix <= ?1",
+            params![cutoff],
         )?;
-        Ok(n)
+        c.execute(
+            "DELETE FROM releases WHERE (expires_unix IS NOT NULL AND expires_unix <= ?1) OR (first_unlock IS NULL AND created_unix <= ?1)",
+            params![cutoff],
+        )?;
+        Ok(n + orphans)
     }
 }
