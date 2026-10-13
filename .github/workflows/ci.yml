@@ -38,6 +38,7 @@ jobs:
       # checkout, when hashFiles() cannot see the repo, so it would skip the job forever.
       - uses: dtolnay/rust-toolchain@stable
         if: ${{ hashFiles('apps/desktop/package.json') != '' }}
+        with: { components: clippy }
       - uses: Swatinem/rust-cache@v2
         if: ${{ hashFiles('apps/desktop/package.json') != '' }}
       - uses: actions/setup-node@v4
@@ -49,5 +50,11 @@ jobs:
       - run: npm run build
         if: ${{ hashFiles('apps/desktop/package.json') != '' }}
         working-directory: apps/desktop
+      # The rust job excludes the desktop crate (it needs the built frontend), so its
+      # clippy and command-layer tests run here, after `npm run build`.
+      - run: cargo clippy -p sealdrop-desktop --all-targets -- -D warnings
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
+      - run: cargo test -p sealdrop-desktop
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
       - run: cargo build -p sealdrop-desktop --release
         if: ${{ hashFiles('apps/desktop/package.json') != '' }}
