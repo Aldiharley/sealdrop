@@ -96,12 +96,13 @@ fn stock_age_decrypts_recipient_mode_and_tar_extracts() {
     );
 }
 
+/// Scrypt-mode packages are checked with the `age` crate only, NOT with the stock Go `age`
+/// CLI: that CLI reads a passphrase only from a terminal and has no non-interactive input,
+/// so it cannot be driven from a test. This is the same implementation that wrote the
+/// file, so it shows format conformance of the library, not independent interop; the two
+/// recipient-mode tests are the stock-age interop evidence.
 #[test]
-fn stock_age_decrypts_scrypt_mode() {
-    if !age_available() {
-        eprintln!("skipping: age not installed");
-        return;
-    }
+fn scrypt_mode_opens_with_the_age_crate_not_the_go_cli() {
     let d = tempfile::tempdir().unwrap();
     let ks = KeyStore::open(d.path().join("ks"));
     ks.generate(false).unwrap();
