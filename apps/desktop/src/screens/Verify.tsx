@@ -130,6 +130,9 @@ export default function Verify({ active }: { active: boolean }) {
   return (
     <>
       <PageHead title="Verify" subtitle="Check a package without opening it." />
+      <span className="sr-only" aria-live="polite">
+        {checking ? "Checking the signature and hash…" : ""}
+      </span>
       <FirstRunBanner />
       <div className="cols-12">
         <div className="span-7 stack">
@@ -141,7 +144,7 @@ export default function Verify({ active }: { active: boolean }) {
               enabled={active && !busy}
               loaded={pkg ? { name: pkg.name, path: pkg.path } : null}
               error={pkgError}
-              onPaths={(paths) => void choosePackage(paths[0])}
+              onPaths={(paths) => (paths.length === 1 ? void choosePackage(paths[0]) : setPkgError("Drop one file at a time."))}
               buttons={[{ label: "Choose package…", onClick: pickPackage }]}
             />
           </Tile>
@@ -231,7 +234,7 @@ export default function Verify({ active }: { active: boolean }) {
                 headline="Drop a .receipt.json here"
                 enabled={active && !rcptBusy}
                 loaded={rcpt ? { name: rcpt.name, path: rcpt.path } : null}
-                onPaths={(paths) => void chooseReceipt(paths[0])}
+                onPaths={(paths) => (paths.length === 1 ? void chooseReceipt(paths[0]) : setRcptError("Drop one file at a time."))}
                 buttons={[{ label: "Choose receipt…", onClick: pickReceipt }]}
               />
               <Field
@@ -265,7 +268,7 @@ function ResultBody({ pkg, checking, outcome }: { pkg: { path: string; name: str
     return (
       <div className="stack">
         <Progress label="Checking the signature and hash" />
-        <span aria-live="polite">Checking the signature and hash…</span>
+        <span>Checking the signature and hash…</span>
       </div>
     );
   }

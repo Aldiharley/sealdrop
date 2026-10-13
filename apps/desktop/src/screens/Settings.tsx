@@ -88,10 +88,16 @@ export default function Settings({ active }: { active: boolean }) {
   async function persist(next: SettingsT, where: "service" | "argon" | "strength" | "armor") {
     try {
       await api.setSettings(next);
-      const fresh = await api.getSettings();
-      setSaved(fresh);
-      setService(fresh.release_service ?? "");
-      setToken(fresh.release_token ?? "");
+      if (where === "service") {
+        // Address/token save: show what the backend normalised (trimmed, empty -> unset).
+        const fresh = await api.getSettings();
+        setSaved(fresh);
+        setService(fresh.release_service ?? "");
+        setToken(fresh.release_token ?? "");
+      } else {
+        // Toggle/strength: local state only, so unsaved address or token edits are left alone.
+        setSaved(next);
+      }
       await refreshSettings();
       flash(where, "Saved.");
       return true;

@@ -263,8 +263,8 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
     case "add_trusted": {
       const name = String(args.name ?? "");
       const key = String(args.key ?? "");
-      if (!/^[A-Za-z0-9_-]+$/.test(name)) throw "trusted-signer names may use letters, digits, - and _ only";
-      if (!/^RWQ[A-Za-z0-9+/]{40,}$/.test(key)) throw "invalid signer key";
+      if (!/^[A-Za-z0-9_-]+$/.test(name)) throw "key store error: invalid trusted name";
+      if (!/^RWQ[A-Za-z0-9+/]{40,}$/.test(key)) throw "key store error: invalid public key: base64 decode failed";
       if (state.trusted.some((t) => t.name === name)) throw `a signer named \`${name}\` already exists`;
       state.trusted.push({ name, key });
       return null;

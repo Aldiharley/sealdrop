@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { compactDuration } from "../lib/format";
+import { SoftButton } from "./SoftButton";
 
 interface CountdownProps {
   /**
@@ -17,6 +18,12 @@ interface CountdownProps {
   announce?: boolean;
   /** Called once per sample when the display reaches zero after counting down from a positive sample. */
   onExpire?: () => void;
+  /**
+   * Takes a fresh service-clock sample. Offered when the display can no longer be trusted (the
+   * computer slept or the page was frozen for over a minute); the display reads "—" until then.
+   */
+  onCheckAgain?: () => void;
+  checkingAgain?: boolean;
 }
 
 const THRESHOLDS: { at: number; text: string }[] = [
@@ -32,6 +39,10 @@ interface Sample {
   t0: number;
   announced: Set<number>;
   expired: boolean;
+  /** Last timer tick on the monotonic clock and on the wall clock (wall clock only detects a wake). */
+  lastMono: number;
+  lastWall: number;
+  stale: boolean;
 }
 
 /**
@@ -39,7 +50,7 @@ interface Sample {
  * monotonic timer (performance.now), never `expires_at` minus the wall clock. It only counts
  * down and then reads "expired"; enforcement is the release service.
  */
-export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, announce, onExpire }: CountdownProps) {
+export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, announce, onExpire, onCheckAgain, checkingAgain }: CountdownProps) {
   const [, setTick] = useState(0);
   const [msg, setMsg] = useState("");
   const sample = useRef<Sample | null>(null);
@@ -54,22 +65,40 @@ export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, annou
         THRESHOLDS.filter((t) => remainingSecs === null || t.at >= remainingSecs || (windowSecs != null && t.at >= windowSecs)).map((t) => t.at),
       ),
       expired: false,
+      lastMono: performance.now(),
+      lastWall: Date.now(),
+      stale: false,
     };
     if (remainingSecs === 0) sample.current.announced.add(0);
   }
   const s = sample.current;
 
   useEffect(() => {
-    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    const id = window.setInterval(() => {
+      // Honesty guard, not a clock: if the monotonic tick gap is far beyond one second, or the
+      // wall clock jumped away from it (sleep/wake), stop showing a number we can't vouch for.
+      const cur = sample.current;
+      if (cur) {
+        const m = performance.now();
+        const w = Date.now();
+        const dm = m - cur.lastMono;
+        const dw = w - cur.lastWall;
+        if (dm > 65_000 || Math.abs(dw - dm) > 60_000) cur.stale = true;
+        cur.lastMono = m;
+        cur.lastWall = w;
+      }
+      setTick((n) => n + 1);
+    }, 1000);
     return () => window.clearInterval(id);
   }, []);
 
+  const stale = s.stale && remainingSecs !== null && !waiting;
   const left = remainingSecs === null ? null : Math.max(0, Math.ceil(remainingSecs - (performance.now() - s.t0) / 1000));
 
   const expireRef = useRef(onExpire);
   expireRef.current = onExpire;
   useEffect(() => {
-    if (left === null) return;
+    if (left === null || stale) return;
     if (announce) {
       for (const t of THRESHOLDS) {
         if (left <= t.at && !s.announced.has(t.at)) {
@@ -87,12 +116,15 @@ export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, annou
       s.expired = true;
       expireRef.current?.();
     }
-  }, [left, announce, s, remainingSecs]);
+  }, [left, announce, s, remainingSecs, stale]);
 
   let state: "low" | "expired" | "waiting" | undefined;
   let label = "expires in";
   let text = "";
-  if (waiting || left === null) {
+  if (stale) {
+    label = "expires in";
+    text = "—";
+  } else if (waiting || left === null) {
     state = "waiting";
     label = "Waiting:";
     text = "not opened yet";
@@ -111,6 +143,11 @@ export function Countdown({ remainingSecs, windowSecs, sampleKey, waiting, annou
         {label ? <span className="label">{label}</span> : null}
         <span className="countdown__time">{text}</span>
       </div>
+      {stale && onCheckAgain ? (
+        <SoftButton size="sm" loading={checkingAgain} busyLabel="Checking…" onClick={onCheckAgain} aria-label="Check the remaining time again">
+          Check again
+        </SoftButton>
+      ) : null}
       {announce ? (
         <span className="sr-only" aria-live="polite">
           {msg}

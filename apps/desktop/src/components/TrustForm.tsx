@@ -27,10 +27,12 @@ export function TrustForm({ signerKey, buttonLabel, existing = [], onTrusted, na
   const [key, setKey] = useState("");
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [keyErr, setKeyErr] = useState<string | null>(null);
+  const [formErr, setFormErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit() {
     if (busy) return;
+    setFormErr(null);
     const n = name.trim();
     const k = (signerKey ?? key).trim();
     let bad = false;
@@ -54,9 +56,10 @@ export function TrustForm({ signerKey, buttonLabel, existing = [], onTrusted, na
       announce(`${n} is now trusted.`);
       onTrusted(n);
     } catch (e) {
-      const msg = mapTrustError(errText(e), n);
-      if (/key/.test(msg)) setKeyErr(msg);
-      else setNameErr(msg);
+      const m = mapTrustError(errText(e), n);
+      if (m.field === "key" && !signerKey) setKeyErr(m.text);
+      else if (m.field === "name") setNameErr(m.text);
+      else setFormErr(m.field === "key" ? "That isn't a valid signer key." : m.text);
     } finally {
       setBusy(false);
     }
@@ -105,6 +108,11 @@ export function TrustForm({ signerKey, buttonLabel, existing = [], onTrusted, na
           {keyField}
         </>
       )}
+      {formErr ? (
+        <div className="field__error" role="alert">
+          {formErr}
+        </div>
+      ) : null}
       <div>
         <SoftButton loading={busy} busyLabel="Trusting…" onClick={submit}>
           {buttonLabel}

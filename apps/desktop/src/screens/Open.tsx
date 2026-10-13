@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errText } from "../lib/api";
 import { useApp } from "../lib/app";
-import { baseName, formatBytes, formatDate, hostOf, parentDir, plural, recipientsText, shortSigner, windowText } from "../lib/format";
-import { G5, NOT_A_PACKAGE, SIDECAR_MISSING, VERIFY_FAILED, mapOpenError, mapVerifyError } from "../lib/errors";
+import { baseName, formatBytes, formatDate, hostOf, looksLikeSignerKey, parentDir, plural, recipientsText, shortSigner, windowText } from "../lib/format";
+import { G5, NOT_A_PACKAGE, VERIFY_FAILED, mapOpenError, mapReceiptFetchError, mapVerifyError } from "../lib/errors";
 import type { VerifyFailure } from "../lib/errors";
 import { useDropTarget } from "../lib/dragdrop";
 import { mockQuery, useIdleClear, useOnceWhen, useProgress } from "../lib/hooks";
@@ -48,6 +48,9 @@ export default function Open({ active }: { active: boolean }) {
   const [checking, setChecking] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [expected, setExpected] = useState("");
+  const [signerErr, setSignerErr] = useState<string | null>(null);
+  /** The expected-signer value the current delivery record was verified with. */
+  const checkedKey = useRef("");
   const [showTrust, setShowTrust] = useState(false);
   const [existing, setExisting] = useState<string[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -62,6 +65,8 @@ export default function Open({ active }: { active: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [expired, setExpired] = useState(false);
+  const [clockBusy, setClockBusy] = useState(false);
+  const [clockError, setClockError] = useState<string | null>(null);
 
   // "Save to…" after a temporary open
   const [saveOpen, setSaveOpen] = useState(false);
@@ -93,12 +98,21 @@ export default function Open({ active }: { active: boolean }) {
     try {
       const v = await api.verify(path, signer);
       if (seq !== reqSeq.current) return;
+      setSignerErr(null);
+      checkedKey.current = signer ?? "";
       if (v.ok) setOutcome({ kind: "ok", v });
       else if (v.untrusted_signer) setOutcome({ kind: "untrusted", key: v.untrusted_signer });
       else setOutcome({ kind: "failed", failure: { kind: "other", text: VERIFY_FAILED } });
     } catch (e) {
       if (seq !== reqSeq.current) return;
-      setOutcome({ kind: "failed", failure: mapVerifyError(errText(e)) });
+      const failure = mapVerifyError(errText(e));
+      if (signer && failure.kind === "signer-mismatch") {
+        // A mistyped expected key is a problem with that field, not with the package: keep the
+        // previous delivery record (and the Trust form if the signer is still unknown).
+        setSignerErr(failure.text);
+      } else {
+        setOutcome({ kind: "failed", failure });
+      }
     }
   }
 
@@ -113,6 +127,8 @@ export default function Open({ active }: { active: boolean }) {
     setProbe(null);
     setOutcome(null);
     setExpected("");
+    setSignerErr(null);
+    checkedKey.current = "";
     setShowTrust(false);
     setMoreOpen(false);
     setOverwrite(false);
@@ -150,10 +166,15 @@ export default function Open({ active }: { active: boolean }) {
 
   async function recheck() {
     if (!pkg) return;
+    const key = expected.trim();
+    if (key !== "" && !looksLikeSignerKey(key)) {
+      setSignerErr("That isn't a valid signer key.");
+      return;
+    }
     const seq = ++reqSeq.current;
     setChecking(true);
     setError(null);
-    await verifyNow(pkg.path, expected.trim() || null, seq);
+    await verifyNow(pkg.path, key || null, seq);
     if (seq === reqSeq.current) setChecking(false);
   }
 
@@ -169,8 +190,11 @@ export default function Open({ active }: { active: boolean }) {
   else if (checking) reason = `Checking ${pkg.name}…`;
   else if (keyPkgNoIdentity) reason = "Create your identity in Keys first.";
   else if (needsPass && passphrase === "") reason = "Enter the passphrase.";
+  else if (!skipVerify && signerErr) reason = signerErr;
   else if (!skipVerify && outcome?.kind === "untrusted") reason = "Trust the signer or enter their key first.";
-  else if (!skipVerify && outcome?.kind === "failed") reason = outcome.failure.kind === "sidecar" ? SIDECAR_MISSING : VERIFY_FAILED;
+  else if (!skipVerify && outcome?.kind === "failed") {
+    reason = outcome.failure.kind === "signature" || outcome.failure.kind === "hash" ? VERIFY_FAILED : outcome.failure.text;
+  }
 
   async function perform(a: {
     path: string;
@@ -262,13 +286,44 @@ export default function Open({ active }: { active: boolean }) {
     }
   }
 
+  /**
+   * Fresh service-clock sample after the countdown went stale (sleep/wake). Uses receipt_fetch on the
+   * package's manifest, which also writes <name>.receipt.json next to the manifest.
+   */
+  async function checkAgain() {
+    if (!pkg || !opened) return;
+    setClockBusy(true);
+    setClockError(null);
+    try {
+      const manifest = pkg.path.replace(/\.sealdrop\.age$/i, ".manifest.json");
+      const r = await api.receiptFetch(manifest);
+      setOpened((o) =>
+        o
+          ? {
+              ...o,
+              out: { ...o.out, remaining_secs: r.remaining_secs, first_unlock: r.first_unlock ?? o.out.first_unlock, expires_at: r.expires_at ?? o.out.expires_at },
+              sample: o.sample + 1,
+            }
+          : o,
+      );
+      setExpired(r.remaining_secs !== null && r.remaining_secs <= 0);
+    } catch (e) {
+      setClockError(mapReceiptFetchError(errText(e)));
+    } finally {
+      setClockBusy(false);
+    }
+  }
+
   function reset() {
+    setClockError(null);
     reqSeq.current++;
     setPkg(null);
     setPkgError(null);
     setProbe(null);
     setOutcome(null);
     setExpected("");
+    setSignerErr(null);
+    checkedKey.current = "";
     setShowTrust(false);
     setOpened(null);
     setExpired(false);
@@ -284,7 +339,7 @@ export default function Open({ active }: { active: boolean }) {
 
   const dropped = useDropTarget(
     tileRef,
-    (paths) => void choosePackage(paths[0]),
+    (paths) => (paths.length === 1 ? void choosePackage(paths[0]) : setPkgError("Drop one file at a time.")),
     active && !working && !opened && pkg !== null,
   );
 
@@ -321,6 +376,13 @@ export default function Open({ active }: { active: boolean }) {
 
   const destValue = timed ? (folder ?? "Temporary folder") : (folder ?? (pkg ? parentDir(pkg.path) : ""));
 
+  // Always rendered while this layout is shown, so the first announcement is not skipped.
+  const liveRegion = (
+    <span className="sr-only" aria-live="polite">
+      {working || saveBusy ? phaseText : checking && pkg ? `Checking ${pkg.name}…` : ""}
+    </span>
+  );
+
   // ============ success layout ============
   if (opened) {
     const o = opened.out;
@@ -328,6 +390,7 @@ export default function Open({ active }: { active: boolean }) {
     return (
       <>
         <PageHead title="Open" subtitle="Check, unlock and restore a package." />
+        {liveRegion}
         <FirstRunBanner />
         <div className="cols-12">
           <div className="span-7 stack">
@@ -389,7 +452,7 @@ export default function Open({ active }: { active: boolean }) {
                     </div>
                   </div>
                 ) : null}
-                {saveBusy && phaseText ? <span aria-live="polite">{phaseText}</span> : null}
+                {saveBusy && phaseText ? <span>{phaseText}</span> : null}
                 {saveError ? <Notice tone="err">{saveError}</Notice> : null}
               </div>
             </Tile>
@@ -416,9 +479,12 @@ export default function Open({ active }: { active: boolean }) {
                         sampleKey={opened.sample}
                         announce
                         onExpire={() => setExpired(true)}
+                        onCheckAgain={() => void checkAgain()}
+                        checkingAgain={clockBusy}
                       />
                     </div>
                   ) : null}
+                  {clockError ? <Notice tone="err">{clockError}</Notice> : null}
                   {o.first_unlock ? <div>First opened {formatDate(o.first_unlock)} (service clock)</div> : null}
                   <p style={{ margin: 0 }}>{TIMED_SENTENCE}</p>
                   <p style={{ margin: 0 }}>Files you have already restored are not removed when the timer ends.</p>
@@ -437,6 +503,7 @@ export default function Open({ active }: { active: boolean }) {
     return (
       <>
         <PageHead title="Open" subtitle="Check, unlock and restore a package." />
+        {liveRegion}
         <FirstRunBanner />
         <div className="cols-12">
           <div className="span-7">
@@ -447,7 +514,7 @@ export default function Open({ active }: { active: boolean }) {
                 helper="Keep the .manifest.json and .minisig files in the same folder."
                 enabled={active}
                 error={pkgError}
-                onPaths={(paths) => void choosePackage(paths[0])}
+                onPaths={(paths) => (paths.length === 1 ? void choosePackage(paths[0]) : setPkgError("Drop one file at a time."))}
                 buttons={[{ label: "Choose package…", onClick: pickPackage }]}
               />
             </Tile>
@@ -472,6 +539,7 @@ export default function Open({ active }: { active: boolean }) {
   return (
     <>
       <PageHead title="Open" subtitle="Check, unlock and restore a package." />
+      {liveRegion}
       <FirstRunBanner />
       <div className="cols-12">
         <div className="span-7 stack">
@@ -491,7 +559,7 @@ export default function Open({ active }: { active: boolean }) {
                   <LinkButton onClick={pickPackage}>Choose another package…</LinkButton>
                 </div>
                 <div className="field__helper">{dropped ? "Release to add" : "Or drop a .sealdrop.age file anywhere on this tile."}</div>
-                {pkgError ? <div className="field__error">{pkgError}</div> : null}
+                {pkgError ? <div className="field__error" role="alert">{pkgError}</div> : null}
               </div>
             </Tile>
           </div>
@@ -501,7 +569,7 @@ export default function Open({ active }: { active: boolean }) {
               {checking ? (
                 <div className="stack stack--sm">
                   <Progress label="Checking the package" />
-                  <span aria-live="polite">Checking {pkg.name}…</span>
+                  <span>Checking {pkg.name}…</span>
                 </div>
               ) : null}
               {!checking && outcome?.kind === "ok" ? (
@@ -565,9 +633,13 @@ export default function Open({ active }: { active: boolean }) {
               <Field
                 label="Expected signer (optional)"
                 value={expected}
-                onChange={setExpected}
+                onChange={(val) => {
+                  setExpected(val);
+                  setSignerErr(null);
+                }}
+                error={signerErr}
                 onBlur={() => {
-                  if (expected.trim() !== "") void recheck();
+                  if (expected.trim() !== checkedKey.current) void recheck();
                 }}
                 onEnter={() => void recheck()}
                 placeholder="Paste a signer key (starts with RWQ)"
@@ -692,7 +764,7 @@ export default function Open({ active }: { active: boolean }) {
               {working ? (
                 <div className="stack stack--sm">
                   <Progress label="Opening" />
-                  <span aria-live="polite">{phaseText}</span>
+                  <span>{phaseText}</span>
                 </div>
               ) : null}
               {error ? <Notice tone="err">{error}</Notice> : null}

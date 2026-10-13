@@ -168,7 +168,7 @@ export function Field({
         </div>
       ) : null}
       {error ? (
-        <div id={errorId} className="field__error">
+        <div id={errorId} className="field__error" role="alert">
           {error}
         </div>
       ) : null}

@@ -131,11 +131,14 @@ export function mapVerifyError(msg: string): VerifyFailure {
   return { kind: "other", text: `Couldn't check the package: ${trimStop(msg)}.` };
 }
 
-export function mapTrustError(msg: string, name: string): string {
-  if (/already exists|exists/i.test(msg)) return `A signer named “${name}” already exists.`;
-  if (/letters, digits|name/i.test(msg) && !/key/i.test(msg)) return "Use letters, digits, - and _ only.";
-  if (/key|minisign|base64|invalid/i.test(msg)) return "That isn't a valid signer key.";
-  return g1(msg);
+/** Routes an add_trusted failure to the field it belongs to; anything else is a form-level error. */
+export function mapTrustError(msg: string, name: string): { field: "name" | "key" | "form"; text: string } {
+  if (/^(key store error: )?invalid trusted name/i.test(msg.trim())) {
+    return { field: "name", text: "Use letters, digits, - and _ only." };
+  }
+  if (/already exists/i.test(msg)) return { field: "name", text: `A signer named “${name}” already exists.` };
+  if (/base64|public key/i.test(msg)) return { field: "key", text: "That isn't a valid signer key." };
+  return { field: "form", text: g1(msg) };
 }
 
 export function mapReceiptVerifyError(msg: string): string {

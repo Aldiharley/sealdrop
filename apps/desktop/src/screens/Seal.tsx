@@ -160,8 +160,7 @@ export default function Seal({ active }: { active: boolean }) {
   if (!item) reason = "Choose something to send.";
   else if (mode === "recipients" && recs.length === 0) reason = "Add a recipient or choose a passphrase.";
   else if (identity && !identity.exists) reason = "Create your identity in Keys first.";
-  else if (timed && !service) reason = "Set up the release service in Settings first.";
-  else if (timed && !hasToken) reason = "The release service needs a deposit token. Add it in Settings.";
+  else if (timed && !service) reason = "Set the release service address and deposit token in Settings (or set SEALDROP_RELEASE_TOKEN in your environment).";
   else if (hwOnly && !allowUnrec) reason = "Accept the unrecoverable-package warning or add a second recipient.";
   else if (timed && winSecs === null) reason = "Enter a whole number of at least 1.";
   else if (dateError) reason = dateError;
@@ -527,6 +526,9 @@ export default function Seal({ active }: { active: boolean }) {
   return (
     <>
       <PageHead title="Seal" subtitle="Lock a file or folder, sign it, and get a delivery record." />
+      <span className="sr-only" aria-live="polite">
+        {working ? phaseText : ""}
+      </span>
       <FirstRunBanner />
       <div className="cols-12">
         <div className="span-7 stack">
@@ -747,7 +749,7 @@ export default function Seal({ active }: { active: boolean }) {
                       The window starts when the recipient first opens the package.
                     </div>
                     {winError ? (
-                      <div id={`${winId}-e`} className="field__error">
+                      <div id={`${winId}-e`} className="field__error" role="alert">
                         {winError}
                       </div>
                     ) : null}
@@ -759,7 +761,7 @@ export default function Seal({ active }: { active: boolean }) {
                     <span>Release service: {hostOf(service)}</span>
                     <LinkButton onClick={() => go("settings")}>Change in Settings</LinkButton>
                   </div>
-                  {!hasToken ? <Notice tone="warn">The release service needs a deposit token. Add it in Settings.</Notice> : null}
+                  {!hasToken ? <Notice tone="warn">Set the release service address and deposit token in Settings (or set SEALDROP_RELEASE_TOKEN in your environment).</Notice> : null}
                 </>
               )}
             </div>
@@ -836,7 +838,7 @@ export default function Seal({ active }: { active: boolean }) {
               {working ? (
                 <div className="stack stack--sm">
                   <Progress label="Sealing" />
-                  <span aria-live="polite">{phaseText}</span>
+                  <span>{phaseText}</span>
                 </div>
               ) : null}
               {error ? (

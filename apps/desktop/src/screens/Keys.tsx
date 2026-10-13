@@ -46,6 +46,8 @@ export default function Keys({ active }: { active: boolean }) {
   const [rows, setRows] = useState<ReceiptRow[]>([]);
   const [receiptError, setReceiptError] = useState<string | null>(null);
 
+  const [createdMsg, setCreatedMsg] = useState<string | null>(null);
+  const idHeading = useRef<HTMLHeadingElement>(null);
   const createRef = useRef<HTMLButtonElement>(null);
   const replaceBtn = useRef<HTMLButtonElement>(null);
   const keepBtn = useRef<HTMLButtonElement>(null);
@@ -79,8 +81,11 @@ export default function Keys({ active }: { active: boolean }) {
       const info = await api.generateIdentity(force);
       setIdentity(info);
       announce("Identity created.");
+      setCreatedMsg("Identity created.");
       setReplaceOpen(false);
       setConfirmText("");
+      // The Create button is gone now; land on the new identity instead of losing focus.
+      window.setTimeout(() => idHeading.current?.focus(), 80);
     } catch (e) {
       const text = `Couldn't create the keys: ${errText(e).replace(/[.\s]+$/, "")}. Your existing identity was not changed.`;
       if (force) setReplaceError(text);
@@ -133,7 +138,7 @@ export default function Keys({ active }: { active: boolean }) {
       <PageHead title="Keys" subtitle="Your identity, trusted signers and receipts." />
       <div className="cols-12">
         <div className="span-7 stack">
-          <Tile title="Your identity">
+          <Tile title="Your identity" headingRef={idHeading} headingFocusable>
             {identity === null ? null : !hasId ? (
               <div className="stack">
                 <p style={{ margin: 0 }}>
@@ -150,6 +155,7 @@ export default function Keys({ active }: { active: boolean }) {
               </div>
             ) : (
               <div className="stack">
+                {createdMsg ? <div role="status">{createdMsg}</div> : null}
                 <Field
                   label="Recipient"
                   as="textarea"
@@ -264,7 +270,7 @@ export default function Keys({ active }: { active: boolean }) {
               <div>
                 <SoftButton onClick={chooseManifest}>Choose manifest…</SoftButton>
               </div>
-              {receiptError ? <div className="field__error">{receiptError}</div> : null}
+              {receiptError ? <div className="field__error" role="alert">{receiptError}</div> : null}
               {rows.length === 0 ? (
                 <p className="field__helper" style={{ margin: 0 }}>
                   No receipts checked yet. Choose the manifest of a timed package you sealed to see when it was opened.
@@ -346,7 +352,7 @@ function ReceiptItem({ row, onCheck }: { row: ReceiptRow; onCheck: () => void })
               </div>
               {r.remaining_secs !== null ? (
                 <div>
-                  <Countdown remainingSecs={r.remaining_secs} sampleKey={row.sample} />
+                  <Countdown remainingSecs={r.remaining_secs} sampleKey={row.sample} onCheckAgain={onCheck} checkingAgain={row.checking} />
                 </div>
               ) : null}
             </>
