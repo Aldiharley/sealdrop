@@ -32,3 +32,4 @@ zeroize.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 flate2 = "1"
+bech32 = "0.11"
