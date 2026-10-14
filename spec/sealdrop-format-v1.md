@@ -520,7 +520,8 @@ header or the unverified manifest (service URL, release id, recipient kind) as u
 ## 6. Extraction requirements
 
 Decoders that extract a container MUST apply this section. Limits are those of the reference;
-a decoder MAY use lower limits.
+a decoder MAY use lower limits. Encoders MUST NOT produce a container that exceeds any of the
+first four limits; the reference refuses to seal such an input and names the limit.
 
 | Limit | Value |
 |---|---|
@@ -926,7 +927,7 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | §5.3 signature | core `manifest.rs` | `sign`, `verify` |
 | §5.4 verification | core `open.rs` | `verify_with`, `resolve_signer` |
 | §5.5 skip verification | core `open.rs`; CLI `open.rs` | `open` (`skip_verify`); `run` |
-| §6 limits | core `extract.rs` | `Limits::default`, `META_MAX_BYTES` |
+| §6 limits | core `extract.rs`; core `pack.rs` | `Limits::default`, `META_MAX_BYTES`; `check_limits` (encoder side, also §3.3) |
 | §6.1 stream guard | core `extract.rs` | `GuardedReader::{read, on_header}`, `parse_size`, `check_pax` |
 | §6.2 extraction | core `extract.rs` | `extract` |
 | §6.3 placing, overwrite | core `extract.rs` | `extract`, `replace`, `OLD_SUFFIX` |
@@ -977,6 +978,4 @@ The MUSTs above stand. In these places sealdrop 0.2.1 does not yet meet them:
 
 | # | Rule | Deviation |
 |---|---|---|
-| a | §3.3 `meta.json` ≤ 1 MiB (encoder) | `pack` does not refuse a larger `meta.json`. A folder of roughly 7 000 or more files seals, then fails to open with "meta.json too large". A fix is scheduled. |
-| b | §4.2 encoding step 2 (inner set obeys age's label rules) | `release::Recipient::wrap_file_key` discards the inner recipients' label sets. `seal` only ever combines one passphrase recipient, or only public-key recipients, so its own packages comply; a direct caller of the library could mix them. |
-| c | §6 limits (encoder side) | The encoder does not check the entry count, total size or per-file size against §6, so it can produce a package that conforming decoders refuse. |
+| a | §4.2 encoding step 2 (inner set obeys age's label rules) | `release::Recipient::wrap_file_key` discards the inner recipients' label sets. `seal` only ever combines one passphrase recipient, or only public-key recipients, so its own packages comply; a direct caller of the library could mix them. |

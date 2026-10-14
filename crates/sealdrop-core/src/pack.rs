@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use tar::{Builder, EntryType, Header};
 use walkdir::WalkDir;
 
-use crate::extract::check_path;
+use crate::extract::{check_path, Limits, META_MAX_BYTES};
 use crate::hashing::{sha256_file, HashingWriter};
 use crate::{Error, Result, TOOL};
 
@@ -176,9 +176,81 @@ pub fn pack<W: Write>(input: &Path, out: W) -> Result<(PackReport, W)> {
     write_plan(plan(input)?, out)
 }
 
+/// `1 MiB (1048576 bytes)`, `64 GiB (68719476736 bytes)`, or just `N bytes`.
+fn describe_bytes(n: u64) -> String {
+    if n >= 1 << 30 && n & ((1 << 30) - 1) == 0 {
+        format!("{} GiB ({n} bytes)", n >> 30)
+    } else if n >= 1 << 20 && n & ((1 << 20) - 1) == 0 {
+        format!("{} MiB ({n} bytes)", n >> 20)
+    } else {
+        format!("{n} bytes")
+    }
+}
+
+/// Refuses a package that a conforming decoder would refuse (spec 3.3 and 6), so `seal`
+/// never produces a package that `open` cannot extract. `entries` counts tar entries the
+/// way extraction does: `meta.json`, every directory entry and every file.
+fn check_limits(
+    root: &str,
+    meta_len: u64,
+    meta_max: u64,
+    entries: u64,
+    files: &[FileEntry],
+    limits: &Limits,
+) -> Result<()> {
+    const SPLIT: &str = "split it into several packages, or put it into one archive file \
+                         (zip, tar) first and seal that";
+    if meta_len > meta_max {
+        return Err(Error::Other(format!(
+            "cannot seal {root}: its file list (meta.json) would be {meta_len} bytes, over the \
+             {} limit every recipient enforces (roughly 7 000 files or more); {SPLIT}",
+            describe_bytes(meta_max)
+        )));
+    }
+    if entries > limits.max_entries {
+        return Err(Error::Other(format!(
+            "cannot seal {root}: it would hold {entries} entries (files, folders and \
+             meta.json), over the limit of {} every recipient enforces; {SPLIT}",
+            limits.max_entries
+        )));
+    }
+    let mut total = 0u64;
+    for f in files {
+        if f.size > limits.max_file_bytes {
+            return Err(Error::Other(format!(
+                "cannot seal {}: the file is {} bytes, over the {} per-file limit every \
+                 recipient enforces; split the file first",
+                f.path,
+                f.size,
+                describe_bytes(limits.max_file_bytes)
+            )));
+        }
+        total = total.saturating_add(f.size);
+    }
+    if total > limits.max_bytes {
+        return Err(Error::Other(format!(
+            "cannot seal {root}: its files total {total} bytes, over the {} limit every \
+             recipient enforces; {SPLIT}",
+            describe_bytes(limits.max_bytes)
+        )));
+    }
+    Ok(())
+}
+
 /// Pass 2: write the tar through a hashing writer. Each file is read at most to the size
 /// pass 1 recorded, and must still have that size and hash.
 fn write_plan<W: Write>(plan: Plan, out: W) -> Result<(PackReport, W)> {
+    write_plan_with(plan, out, META_MAX_BYTES, &Limits::default())
+}
+
+/// `write_plan` with explicit limits: the decoder's defaults in production, lower ones in
+/// tests. The limits are checked before anything is written to `out`.
+fn write_plan_with<W: Write>(
+    plan: Plan,
+    out: W,
+    meta_max: u64,
+    limits: &Limits,
+) -> Result<(PackReport, W)> {
     let Plan {
         is_dir,
         root_name,
@@ -194,6 +266,15 @@ fn write_plan<W: Write>(plan: Plan, out: W) -> Result<(PackReport, W)> {
     };
     let meta_bytes =
         serde_json::to_vec_pretty(&meta).map_err(|e| Error::Manifest(e.to_string()))?;
+    let dir_entries = if is_dir { 1 + dirs.len() as u64 } else { 0 };
+    check_limits(
+        &root_name,
+        meta_bytes.len() as u64,
+        meta_max,
+        1 + dir_entries + files.len() as u64,
+        &meta.files,
+        limits,
+    )?;
 
     let hw = HashingWriter::new(out);
     let mut tar = Builder::new(hw);
@@ -383,6 +464,107 @@ mod tests {
         let rel = Path::new("sub").join(&bad);
         let err = rel_string("findings", &rel).unwrap_err();
         assert!(err.to_string().contains("not valid Unicode"), "{err}");
+    }
+
+    fn entry(path: &str, size: u64) -> FileEntry {
+        FileEntry {
+            path: path.into(),
+            size,
+            sha256: "0".repeat(64),
+        }
+    }
+
+    #[test]
+    fn refuses_a_meta_json_over_one_mib() {
+        // 8 000 files with 80-character paths, built in memory: no files on disk.
+        let files: Vec<FileEntry> = (0..8_000)
+            .map(|i| entry(&format!("big/{i:0>76}"), 1))
+            .collect();
+        let meta = Meta {
+            format: META_FORMAT.into(),
+            tool: TOOL.into(),
+            created: "2026-10-14T00:00:00Z".into(),
+            root: "big".into(),
+            files,
+        };
+        let len = serde_json::to_vec_pretty(&meta).unwrap().len() as u64;
+        assert!(len > META_MAX_BYTES, "{len}");
+        let n = 2 + meta.files.len() as u64;
+        let l = Limits::default();
+        let err = check_limits("big", len, META_MAX_BYTES, n, &meta.files, &l)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("meta.json") && err.contains("1 MiB"), "{err}");
+        assert!(err.contains("split it into several packages"), "{err}");
+        // At the limit it is accepted.
+        check_limits("big", len, len, n, &meta.files, &l).unwrap();
+    }
+
+    #[test]
+    fn refuses_more_entries_than_the_decoder_accepts() {
+        let l = Limits::default();
+        let err = check_limits("r", 10, META_MAX_BYTES, 100_001, &[], &l)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("100001 entries"), "{err}");
+        assert!(err.contains("limit of 100000"), "{err}");
+        check_limits("r", 10, META_MAX_BYTES, 100_000, &[], &l).unwrap();
+    }
+
+    #[test]
+    fn refuses_files_over_the_size_limits() {
+        let l = Limits::default();
+        let gib = 1u64 << 30;
+        // One file over 64 GiB.
+        let one = [entry("r/huge", 64 * gib + 1)];
+        let err = check_limits("r", 10, META_MAX_BYTES, 3, &one, &l)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("r/huge") && err.contains("64 GiB"), "{err}");
+        assert!(err.contains("per-file"), "{err}");
+        // Two files each under the per-file limit, together over 64 GiB.
+        let two = [entry("r/a", 40 * gib), entry("r/b", 40 * gib)];
+        let err = check_limits("r", 10, META_MAX_BYTES, 4, &two, &l)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("total") && err.contains("64 GiB"), "{err}");
+        // Exactly at both limits: accepted.
+        let at = [entry("r/a", 32 * gib), entry("r/b", 32 * gib)];
+        check_limits("r", 10, META_MAX_BYTES, 4, &at, &l).unwrap();
+    }
+
+    #[test]
+    fn write_plan_checks_limits_before_writing_anything() {
+        let d = fixture();
+        // The fixture packs to 6 entries: meta.json, findings/, empty/, sub/, a.txt, b.bin.
+        let low = Limits {
+            max_entries: 5,
+            ..Limits::default()
+        };
+        let mut out = Vec::new();
+        let p = plan(&d.path().join("findings")).unwrap();
+        let err = write_plan_with(p, &mut out, META_MAX_BYTES, &low)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("6 entries"), "{err}");
+        assert!(out.is_empty(), "nothing may be written before the check");
+
+        let p = plan(&d.path().join("findings")).unwrap();
+        let err = write_plan_with(p, &mut out, 64, &Limits::default())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("meta.json"), "{err}");
+        assert!(out.is_empty(), "nothing may be written before the check");
+
+        // At exactly 6 entries it packs, and extraction accepts it under the same limit.
+        let six = Limits {
+            max_entries: 6,
+            ..Limits::default()
+        };
+        let p = plan(&d.path().join("findings")).unwrap();
+        write_plan_with(p, &mut out, META_MAX_BYTES, &six).unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        crate::extract::extract(&out[..], dst.path(), &six, false).unwrap();
     }
 
     #[test]
