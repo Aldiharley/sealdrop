@@ -1,0 +1,9 @@
+{
+  "comment": "§6.2 a file not listed in meta.json must be rejected",
+  "expect": "extract failure",
+  "files": {
+    "tar": "input.tar"
+  },
+  "name": "tar-reject-unlisted-file",
+  "stock_age": "n/a"
+}

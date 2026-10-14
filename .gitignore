@@ -28,6 +28,8 @@ service.pub
 # fixture exemptions go last: a later pattern would otherwise re-ignore them
 !testkit/**
 !crates/**/tests/fixtures/**
+# spec/vectors holds test-only keys, identities and packages (CC0, published on purpose)
+!spec/vectors/**
 
 # env and secrets
 .env

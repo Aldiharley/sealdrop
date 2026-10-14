@@ -1,0 +1,16 @@
+{
+  "comment": "§8.2 internally consistent receipt signed by a key that is not the manifest's service_key",
+  "expect": "receipt failure",
+  "expected": {
+    "package_sha256": "abababababababababababababababababababababababababababababababab",
+    "release_id": "3b1f8c6e-5d2a-4e9b-9c7f-1a2b3c4d5e6f"
+  },
+  "files": {
+    "receipt": "receipt.json"
+  },
+  "inputs": {
+    "service_key": "RWQfgHiVfhzK5Q6PKw1I1GIPAA87WKMT4qyYcmwm39QJwyyfejHO1V8F"
+  },
+  "name": "receipt-wrong-key",
+  "stock_age": "n/a"
+}

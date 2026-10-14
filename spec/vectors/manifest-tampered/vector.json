@@ -1,0 +1,31 @@
+{
+  "comment": "§5.3 one signed byte of manifest.json changed (classification case)",
+  "expect": "verify failure",
+  "expected": {
+    "files": [
+      {
+        "path": "report/a.txt",
+        "sha256": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+        "size": 6
+      },
+      {
+        "path": "report/sub/b.bin",
+        "sha256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+        "size": 256
+      }
+    ],
+    "package_id": "e347948b-243b-48e8-843c-4b996c194000",
+    "plaintext_tar_sha256": "c83d7783843afd7674430c730ba0d5d9b509848f4a043f000b9c719d0bf68854"
+  },
+  "files": {
+    "manifest": "manifest.json",
+    "package": "package.sealdrop.age",
+    "signature": "manifest.json.minisig"
+  },
+  "inputs": {
+    "identity": "AGE-SECRET-KEY-1ETV7QCZFYLAUGQHXTVPLY3CSCF59SV7P2MW0MAK7HVKWDWAL6DPS79FGCY",
+    "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
+  },
+  "name": "manifest-tampered",
+  "stock_age": "n/a"
+}

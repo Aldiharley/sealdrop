@@ -1,0 +1,9 @@
+{
+  "comment": "§6.2 symlink entries must be rejected",
+  "expect": "extract failure",
+  "files": {
+    "tar": "input.tar"
+  },
+  "name": "tar-reject-symlink",
+  "stock_age": "n/a"
+}

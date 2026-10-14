@@ -1,0 +1,15 @@
+{
+  "comment": "§4.1 decode bounds: p=9 exceeds the decoder bound of 8",
+  "expect": "header failure",
+  "expected": {
+    "plaintext_tar_sha256": "c83d7783843afd7674430c730ba0d5d9b509848f4a043f000b9c719d0bf68854"
+  },
+  "files": {
+    "package": "package.sealdrop.age"
+  },
+  "inputs": {
+    "passphrase": "spec vector passphrase"
+  },
+  "name": "argon2id-reject-p-too-large",
+  "stock_age": "rejects"
+}

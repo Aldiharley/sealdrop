@@ -1,0 +1,15 @@
+{
+  "comment": "§4.1 decode bounds: t=11 exceeds the decoder bound of 10",
+  "expect": "header failure",
+  "expected": {
+    "plaintext_tar_sha256": "c77d3f16eef5933899c17d0b91f6e83dca60521b1667cb7811347bf171dfbded"
+  },
+  "files": {
+    "package": "package.sealdrop.age"
+  },
+  "inputs": {
+    "passphrase": "spec vector passphrase"
+  },
+  "name": "argon2id-reject-t-too-large",
+  "stock_age": "rejects"
+}

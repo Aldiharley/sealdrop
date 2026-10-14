@@ -4,3 +4,4 @@
 *.icns binary
 *.jpg binary
 testkit/** -text
+spec/vectors/** -text

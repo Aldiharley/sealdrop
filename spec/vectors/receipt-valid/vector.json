@@ -1,0 +1,16 @@
+{
+  "comment": "§8 receipt signed by keys/service.key",
+  "expect": "receipt ok",
+  "expected": {
+    "package_sha256": "abababababababababababababababababababababababababababababababab",
+    "release_id": "3b1f8c6e-5d2a-4e9b-9c7f-1a2b3c4d5e6f"
+  },
+  "files": {
+    "receipt": "receipt.json"
+  },
+  "inputs": {
+    "service_key": "RWQfgHiVfhzK5Q6PKw1I1GIPAA87WKMT4qyYcmwm39QJwyyfejHO1V8F"
+  },
+  "name": "receipt-valid",
+  "stock_age": "n/a"
+}

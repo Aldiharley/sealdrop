@@ -1,0 +1,9 @@
+{
+  "comment": "§6.1 a PAX size= override must be refused",
+  "expect": "extract failure",
+  "files": {
+    "tar": "input.tar"
+  },
+  "name": "tar-reject-pax-size",
+  "stock_age": "n/a"
+}

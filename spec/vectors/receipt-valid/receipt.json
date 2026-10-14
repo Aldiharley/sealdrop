@@ -1,0 +1,4 @@
+{
+  "receipt_json": "{\n  \"release_id\": \"3b1f8c6e-5d2a-4e9b-9c7f-1a2b3c4d5e6f\",\n  \"package_sha256\": \"abababababababababababababababababababababababababababababababab\",\n  \"first_unlock\": \"2026-10-14T09:00:00Z\",\n  \"expires_at\": \"2026-10-14T09:10:00Z\",\n  \"unlock_count\": 1,\n  \"service_key\": \"RWQfgHiVfhzK5Q6PKw1I1GIPAA87WKMT4qyYcmwm39QJwyyfejHO1V8F\",\n  \"now\": \"2026-10-14T09:01:00Z\"\n}",
+  "signature": "untrusted comment: signature from rsign secret key\nRUQfgHiVfhzK5T89imvJkKejawQGW/JwrS+yqCbhhzCe0lL6WxUellKPq+DhND2v88jDmhp74GAHvlODK50Jnto8rgiE8YW/SgU=\ntrusted comment: sealdrop receipt 3b1f8c6e-5d2a-4e9b-9c7f-1a2b3c4d5e6f\n+OV0ZvEJZ7NOw+bn8MPwwBM44H1MsfPxNwnMpBQuJC2i0YbmpAAtaMENc/UfImA4VAP0NknRLE8Ei0VLmWpqCQ==\n"
+}

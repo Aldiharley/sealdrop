@@ -1,0 +1,9 @@
+{
+  "comment": "§6.1 GNU long-name header declaring 2 MiB must be refused before buffering",
+  "expect": "extract failure",
+  "files": {
+    "tar": "input.tar"
+  },
+  "name": "tar-reject-long-name-bomb",
+  "stock_age": "n/a"
+}

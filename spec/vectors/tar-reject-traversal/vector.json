@@ -1,0 +1,9 @@
+{
+  "comment": "§3.4 path with .. must be rejected",
+  "expect": "extract failure",
+  "files": {
+    "tar": "input.tar"
+  },
+  "name": "tar-reject-traversal",
+  "stock_age": "n/a"
+}
