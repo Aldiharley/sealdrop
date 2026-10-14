@@ -479,6 +479,53 @@ mod tests {
         assert_eq!(opened.release.unwrap().expires_at, "2026-10-13T09:10:00Z");
     }
 
+    #[test]
+    fn deposit_intercept_seals_against_a_production_url_without_http() {
+        let (d, ks) = store();
+        // A real minisign public key, as a service would return it.
+        let service_key = ks.signing_public_string().unwrap();
+        let mut rq = req(
+            input(d.path()),
+            d.path().join("out"),
+            Mode::Recipients(vec![me(&ks)]),
+        );
+        rq.release = Some(crate::seal::ReleaseConfig {
+            // RFC 6761: never resolves, so any real HTTP attempt would fail the seal.
+            service: "https://release.invalid/".into(),
+            token: "t".into(),
+            window_secs: 60,
+        });
+        crate::seal::test_support::intercept_deposits(&service_key);
+        let res = seal(&ks, rq, &NoProgress);
+        crate::seal::test_support::clear_intercept();
+        let res = res.unwrap();
+        let rel = res.manifest_doc.release.as_ref().unwrap();
+        assert_eq!(rel.service, "https://release.invalid");
+        assert_eq!(rel.service_key, service_key);
+        assert!(minisign::PublicKey::from_base64(&rel.service_key).is_ok());
+        let args = crate::probe::probe(&res.package).unwrap().release.unwrap();
+        assert_eq!(args.service, "https://release.invalid");
+        // The intercepted deposit is remembered, and it opens the package.
+        let d2 = Deposit {
+            release_id: args.release_id.clone(),
+            k_release: crate::seal::test_support::last_memory_deposit().unwrap(),
+            unlock_token: zeroize::Zeroizing::new([0u8; 32]),
+            window_secs: 60,
+        };
+        let mut fetch = MemoryFetch::serving(&d2);
+        fetch_set_token(&mut fetch, &args.unlock_token_b64);
+        open(
+            &ks,
+            open_req(res.package.clone(), d.path().join("r")),
+            Box::new(fetch),
+            &NoProgress,
+        )
+        .unwrap();
+
+        // Cleared: deposits are no longer intercepted (they would go to the service).
+        assert!(crate::seal::test_support::intercepted().is_none());
+    }
+
     /// A release service that must never be contacted.
     struct NoNetwork;
     impl ReleaseFetch for NoNetwork {

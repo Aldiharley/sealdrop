@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "2610064b-8dce-487f-8366-5c0707b70533",
-    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
+    "package_id": "53e0dd43-9f57-4dac-a97e-ea4feb4a515d",
+    "plaintext_tar_sha256": "60f4bf0b419f08ec215859ae1fb60fde0341b66f29bda6bbb93daa3e2ac6aba1"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,7 +23,7 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "passphrase": "blog trout sierra unabashed oppressed tapping",
+    "passphrase": "sizzle refinance uplifting overeager dolly amplifier",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "passphrase-argon2id-compat",

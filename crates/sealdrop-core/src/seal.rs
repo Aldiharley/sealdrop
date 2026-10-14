@@ -72,9 +72,12 @@ pub fn bundle_paths(package: &Path) -> (PathBuf, PathBuf) {
     (m, s)
 }
 
-/// Test seam: remembers the last deposit made against the `memory://` service so tests
-/// can construct a `MemoryFetch` that serves it. Compiled only for tests and the
-/// `test-support` feature, so production builds have no `memory://` shortcut.
+/// Test seams. `memory://`: remembers the last deposit made against the in-process
+/// service so tests can construct a `MemoryFetch` that serves it. Deposit intercept: while
+/// set, every deposit (to any service URL) skips HTTP, is remembered the same way, and
+/// returns the given service key, so a test can seal against a production-valid URL.
+/// Compiled only for tests and the `test-support` feature, so production builds have
+/// neither shortcut.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support {
@@ -83,12 +86,24 @@ pub mod test_support {
     // Per-thread, so parallel tests that each seal and then read cannot see each other's key.
     thread_local! {
         static LAST: RefCell<Option<Zeroizing<[u8; 32]>>> = const { RefCell::new(None) };
+        static INTERCEPT: RefCell<Option<String>> = const { RefCell::new(None) };
     }
     pub fn remember(k: &Zeroizing<[u8; 32]>) {
         LAST.with(|l| *l.borrow_mut() = Some(k.clone()));
     }
     pub fn last_memory_deposit() -> Option<Zeroizing<[u8; 32]>> {
         LAST.with(|l| l.borrow().clone())
+    }
+    /// From now on (on this thread), deposits skip HTTP and return `service_key`.
+    pub fn intercept_deposits(service_key: &str) {
+        INTERCEPT.with(|i| *i.borrow_mut() = Some(service_key.to_string()));
+    }
+    /// Ends `intercept_deposits`: deposits go to the service again.
+    pub fn clear_intercept() {
+        INTERCEPT.with(|i| *i.borrow_mut() = None);
+    }
+    pub(crate) fn intercepted() -> Option<String> {
+        INTERCEPT.with(|i| i.borrow().clone())
     }
 }
 
@@ -127,11 +142,16 @@ fn create_new(path: &Path) -> Result<File> {
         })
 }
 
-/// Deposits the release key and returns the service key. Under test, `memory://` is
-/// simulated in-process; in every other build it falls through to the real client, which
-/// has no transport for it and fails.
+/// Deposits the release key and returns the service key. Under test, an active deposit
+/// intercept or a `memory://` service is simulated in-process; in every other build there
+/// is no intercept, and `memory://` falls through to the real client, which has no
+/// transport for it and fails.
 #[cfg(any(test, feature = "test-support"))]
 fn deposit_key(service: &str, token: &str, d: &Deposit, package_sha256: &str) -> Result<String> {
+    if let Some(service_key) = test_support::intercepted() {
+        test_support::remember(&d.k_release);
+        return Ok(service_key);
+    }
     if service.starts_with("memory://") {
         test_support::remember(&d.k_release);
         return Ok("memory".to_string());

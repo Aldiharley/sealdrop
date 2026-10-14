@@ -1,4 +1,4 @@
 {
   "receipt_json": "{\n  \"release_id\": \"3b1f8c6e-5d2a-4e9b-9c7f-1a2b3c4d5e6f\",\n  \"package_sha256\": \"abababababababababababababababababababababababababababababababab\",\n  \"first_unlock\": null,\n  \"expires_at\": null,\n  \"unlock_count\": 0,\n  \"service_key\": \"RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW\",\n  \"now\": \"2026-10-14T09:01:00Z\"\n}",
-  "signature": "untrusted comment: signature from rsign secret key\nRUTXDZtJrnjtYEsDKvTYlKY2XjPxYa3QoOp8OF1ONGO8tyeyJVMz8OnnVGyDtKenLGNtSAxK4sMaLrffC0dc0gwv3k5iJpry3AQ=\ntrusted comment: sealdrop receipt 3b1f8c6e-5d2a-4e9b-9c7f-1a2b3c4d5e6f\nRiaOHWKHHnwdB/zD7tlLkPiZHwJHeSoONjqixwT1UE7LIu+1dsXurmMFCMgk9RPaFFvav59rXUAlG84PC0ZrAw==\n"
+  "signature": "untrusted comment: signature from rsign secret key\nRUTXDZtJrnjtYJavtMQw4CdsTwn6WQW+T+CO0HFG6qWxX/3tMTnP6baChPG3h45V6FvULXPHdhN4pyrjDv6MtFsoF4g7e40o2QQ=\ntrusted comment: sealdrop receipt 3b1f8c6e-5d2a-4e9b-9c7f-1a2b3c4d5e6f\n+ggR9Yvhx9l5usf+r0ZKl2TOjRn9ZY4m+X05InJwICvPmfKAoY0DdyvBNY8fyY1SCdt4T/TqIs4VlxC/ul3aAw==\n"
 }

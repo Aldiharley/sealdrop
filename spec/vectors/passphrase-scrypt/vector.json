@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "6cd298e2-4696-4073-afbc-aad277951fca",
-    "plaintext_tar_sha256": "49d7765c99cb7a5f43bfadc9b7bfb1dbac27ae16609bfeec19ac064315b6d9ba"
+    "package_id": "6e168d90-9c5c-4974-a670-129835f4ecbd",
+    "plaintext_tar_sha256": "aeb310d19c80a850a462ba3a4121f6ef1997de92cab5ce39f9f66e0c493344b8"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,7 +23,7 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "passphrase": "matchless lyrically passerby item sulfite elastic",
+    "passphrase": "headroom siding sitcom caviar earache livestock",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "passphrase-scrypt",

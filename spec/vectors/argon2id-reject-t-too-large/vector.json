@@ -2,7 +2,7 @@
   "comment": "§4.1 decode bounds: t=11 exceeds the decoder bound of 10",
   "expect": "header failure",
   "expected": {
-    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
+    "plaintext_tar_sha256": "989bede9b4dc32a78bfea71d354a37e6211a038038161e822b33204d8d24b27c"
   },
   "files": {
     "package": "report.sealdrop.age"

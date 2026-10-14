@@ -16,11 +16,11 @@ test data. Never use any of it to protect real data. See `keys/README.md`.
 ## Running the conformance test against the reference
 
 ```
-cargo test -p sealdrop-core --features test-support --test format_vectors
+cargo test -p sealdrop-core --test format_vectors
 ```
 
-The `test-support` feature enables the `memory://spec.vectors` transport used by the timed-release
-vectors; no network is contacted.
+No feature and no network are needed. With the Go `age` binary on `PATH` the test also proves
+every `stock_age` claim; set `SEALDROP_REQUIRE_AGE=1` to make a missing binary an error.
 
 ## Regenerating (maintainers only)
 
@@ -29,8 +29,9 @@ SEALDROP_VECTORS_FORCE=1 cargo test -p sealdrop-core --features test-support \
   --test format_vectors_gen -- --ignored regenerate_format_vectors
 ```
 
-Without `SEALDROP_VECTORS_FORCE=1` the generator keeps every vector directory that already exists and
-reuses the committed keys. Ciphertexts are not reproducible byte for byte (age uses fresh randomness
+Without `SEALDROP_VECTORS_FORCE=1` the generator keeps every vector directory that already exists;
+it always reuses the committed keys. The generator (only) needs the `test-support` feature, for the
+in-process deposit intercept that the timed-release vectors are sealed with. Ciphertexts are not reproducible byte for byte (age uses fresh randomness
 for every file key, salt and ephemeral key, and the manifest carries timestamps and a new
 `package_id`), so regenerating changes the files in every vector but not what they test.
 
@@ -58,9 +59,16 @@ Packages are stored under the bundle's real names (`report.sealdrop.age`,
 `ciphertext.file` and a decoder compares it with the package's name (spec §5.4 step 5). A harness
 must present them to the decoder under exactly those names.
 
-## Timed-release manifests
+## Timed-release vectors
 
-The timed-release vectors are sealed against the in-process `memory://spec.vectors` seam, which has
-no signing key, so their manifests carry `release.service_key: "memory"` rather than a minisign
-public key. Receipt checking against a real service key is covered by `receipt-valid` and
+The two `timed-release-*` packages look exactly like production output. Their headers and
+manifests name the service `https://release.invalid`, which passes the service-URL rules (spec §7.1)
+in every build but never resolves (RFC 6761), and their manifests record `keys/service.pub` as
+`release.service_key`. The generator intercepted the deposit in-process instead of calling a
+service.
+
+A harness must not contact any network. When the decoder sends the unlock request (spec §4.2 step
+7), the harness answers it itself: a 200 response whose `k_release` is the vector's
+`inputs.k_release`. It cannot check the unlock token, since a vector carries no service-side
+`unlock_token_hash`. Receipt checking against the service key is covered by `receipt-valid` and
 `receipt-wrong-key`.

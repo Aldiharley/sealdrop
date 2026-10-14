@@ -1,6 +1,11 @@
 //! Regenerates `spec/vectors/`. Run with:
-//!   cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors
-//! Existing vector directories are kept unless SEALDROP_VECTORS_FORCE=1.
+//!   SEALDROP_VECTORS_FORCE=1 cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors
+//! Existing vector directories are kept unless SEALDROP_VECTORS_FORCE=1. The committed keys
+//! under `spec/vectors/keys/` are always reused.
+//!
+//! Needs `test-support` for the deposit intercept: the timed-release vectors are sealed
+//! against the production-valid `https://release.invalid` (RFC 6761: never resolves) with
+//! no HTTP, and record `keys/service.pub` as the service key.
 #![cfg(feature = "test-support")]
 
 use std::fs;
@@ -215,11 +220,13 @@ fn regenerate_format_vectors() {
     ] {
         if let Some(d) = want(name) {
             let rc = ReleaseConfig {
-                service: "memory://spec.vectors".into(),
+                service: "https://release.invalid".into(),
                 token: "unused".into(),
                 window_secs: 600,
             };
+            sealdrop_core::seal::test_support::intercept_deposits(&service.pk.to_base64());
             let (res, expected) = seal_into(&ks, &d, mode, false, Some(rc));
+            sealdrop_core::seal::test_support::clear_intercept();
             let k = sealdrop_core::seal::test_support::last_memory_deposit().unwrap();
             let mut inputs =
                 json!({"k_release": BASE64_STANDARD_NO_PAD.encode(*k), "signer_key": signer});
@@ -232,7 +239,7 @@ fn regenerate_format_vectors() {
                 &d,
                 json!({"name": name, "expect": "success", "stock_age": "rejects",
                 "inputs": inputs, "expected": expected, "files": bundle_files,
-                "comment": "§4.2 sealdrop-release stanza; K_release is what the service would return"}),
+                "comment": "§4.2 sealdrop-release stanza for service https://release.invalid; K_release is what the service would return (harnesses supply it, no network)"}),
             );
         }
     }
@@ -284,20 +291,25 @@ fn regenerate_format_vectors() {
         }
     }
     // Manifest/ciphertext tamper vectors derived from a fresh recipient package.
-    for (name, mutate, why) in [
+    // `stock_age`: stock age never looks at the manifest, so it opens the two manifest
+    // vectors; the flipped ciphertext byte fails age's own payload authentication.
+    for (name, mutate, stock_age, why) in [
         (
             "manifest-tampered",
             0u8,
+            "opens",
             "§5.3 one signed byte of manifest.json changed (classification case)",
         ),
         (
             "manifest-wrong-comment",
             1u8,
+            "opens",
             "§5.3 manifest re-signed by the right key but with trusted comment 'sealdrop manifest wrong'",
         ),
         (
             "ciphertext-tampered",
             2u8,
+            "rejects",
             "§5.4 one byte of the package flipped; signature still valid, ciphertext hash mismatch",
         ),
     ] {
@@ -332,7 +344,7 @@ fn regenerate_format_vectors() {
             }
             write_json(
                 &d,
-                json!({"name": name, "expect": "verify failure", "stock_age": "n/a",
+                json!({"name": name, "expect": "verify failure", "stock_age": stock_age,
                 "inputs": {"identity": identity_line(&ks), "signer_key": signer},
                 "expected": expected, "files": bundle_files, "comment": why}),
             );

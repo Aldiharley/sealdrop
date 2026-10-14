@@ -21,11 +21,13 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --exclude sealdrop-desktop -- -D warnings
+      # The vector generator compiles only with test-support; lint it too.
+      - run: cargo clippy -p sealdrop-core --all-targets --features test-support -- -D warnings
       - run: cargo test --workspace --exclude sealdrop-desktop
         env:
           SEALDROP_REQUIRE_AGE: "1"
       - name: Format-spec conformance vectors
-        run: cargo test -p sealdrop-core --features test-support --test format_vectors
+        run: cargo test -p sealdrop-core --test format_vectors
         env:
           SEALDROP_REQUIRE_AGE: "1"
   deny:

@@ -1,5 +1,5 @@
 {
-  "comment": "§4.2 sealdrop-release stanza; K_release is what the service would return",
+  "comment": "§4.2 sealdrop-release stanza for service https://release.invalid; K_release is what the service would return (harnesses supply it, no network)",
   "expect": "success",
   "expected": {
     "files": [
@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "c2ac2d7f-de44-4911-ab13-5ba52e6b96f7",
-    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
+    "package_id": "4717f355-e61a-4ab2-828b-295f7ce460f2",
+    "plaintext_tar_sha256": "60f4bf0b419f08ec215859ae1fb60fde0341b66f29bda6bbb93daa3e2ac6aba1"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -24,7 +24,7 @@
   },
   "inputs": {
     "identity": "AGE-SECRET-KEY-1ETV7QCZFYLAUGQHXTVPLY3CSCF59SV7P2MW0MAK7HVKWDWAL6DPS79FGCY",
-    "k_release": "96PviJXuiPc8W2bU99ACcu5JyZVtEMnu6/7m++ZYqG8",
+    "k_release": "HNPkAi+Xm63XVa7PEt06wrKzqi9NX/m0g8Bl/itNKg0",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "timed-release-x25519",

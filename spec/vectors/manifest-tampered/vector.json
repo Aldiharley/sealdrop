@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "a17cb6d2-0cb4-4983-a63e-d819c68027ac",
-    "plaintext_tar_sha256": "5bf340802dfb3179e11c232fd906336b50862e3ad6d5051e2af38a8dab97888f"
+    "package_id": "82ea31b4-f198-4d5a-975e-76460620bd0e",
+    "plaintext_tar_sha256": "321a75c7dfc3e6c8852b49e2f10d33944c6bdbd82c8381dfd2b7681d2326ab9d"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -27,5 +27,5 @@
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "manifest-tampered",
-  "stock_age": "n/a"
+  "stock_age": "opens"
 }

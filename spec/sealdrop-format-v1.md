@@ -872,31 +872,49 @@ exactly this schema:
   `receipt ok`, `receipt failure`.
 - `stock_age`: `opens` (stock age decrypts it with `inputs.identity`), `opens-interactive`
   (stock age decrypts it after prompting for `inputs.passphrase`), `rejects` (stock age refuses
-  it), `n/a` (no package to try).
+  it), `n/a` (no package to try). A vector has `n/a` if and only if it has no `files.package`.
+  Stock age never reads the manifest, so it opens the package of a vector whose manifest is
+  wrong (`manifest-tampered`, `manifest-wrong-comment`).
 - Every key inside `inputs` and `files` is optional; a vector carries only what it needs.
   `files` values are file names inside the vector's directory.
 - `inputs` and `expected` MAY be omitted when a vector needs none (the `tar-reject-*` vectors have
   neither). `expected.release_id` and `expected.package_sha256` are used by the receipt vectors.
+- Receipt vectors (§8.2): `inputs.service_key`, `expected.release_id` and
+  `expected.package_sha256` stand for the verified manifest's `release.service_key`,
+  `release.release_id` and `ciphertext.sha256`. For package vectors, `inputs.signer_key` is the
+  key the harness trusts (§5.4 step 2).
 - `files.package`, `files.manifest` and `files.signature` are the bundle's own file names, so
   that §5.1 and §5.4 apply unchanged: a harness MUST present them to the decoder under exactly
   those names (§5.4 step 5 compares `ciphertext.file` with the package's name).
-- Timed-release vectors carry `inputs.k_release`, and their headers name the service
-  `memory://spec.vectors`. Conformance harnesses MUST take `K_release` from the vector and
-  MUST NOT contact any network. (`memory://` passes §7.1 only in test builds.)
+- Timed-release vectors carry `inputs.k_release`. Their headers and manifests name the service
+  `https://release.invalid`, a production-valid URL (§7.1) whose name never resolves
+  (RFC 6761), and their manifests record `keys/service.pub` as `release.service_key`, exactly as
+  a real deposit would. A harness MUST NOT contact any network: it answers the unlock request
+  (§4.2 decode step 7) itself, as a 200 response whose `k_release` is `inputs.k_release`. It
+  does not check the unlock token, because a vector carries no service-side
+  `unlock_token_hash`.
 - Passphrases are recorded in `inputs.passphrase`; for sealed vectors they are the words the
   encoder generated.
-- `expected` describes a successful open; it is omitted or partial for failure vectors.
+- `expected` describes a successful open; it is omitted or partial for failure vectors. For a
+  `success` vector, `expected.plaintext_tar_sha256` is the SHA-256 of the decrypted container,
+  the main known-answer value; harnesses SHOULD check it (the reference's harness decrypts
+  each package a second time, without extracting, to do so).
 - `comment` names the section of this document the vector exercises, e.g. `§4.1 step 6`.
 
 All secrets in the vectors (identity, passphrases, `K_release`, signer and service key pairs)
 are test material only.
 
-Running them against the reference, and regenerating them (maintainers only):
+Running them against the reference (no feature and no network needed), and regenerating them
+(maintainers only; `SEALDROP_VECTORS_FORCE=1` replaces existing vectors, without it the
+generator only fills in missing ones, see `spec/vectors/README.md`):
 
 ```
-cargo test -p sealdrop-core --features test-support --test format_vectors
-cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors
+cargo test -p sealdrop-core --test format_vectors
+SEALDROP_VECTORS_FORCE=1 cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors
 ```
+
+The generator needs the `test-support` feature only to seal the timed-release vectors without
+contacting `https://release.invalid`: it intercepts the deposit (§7.2) in-process.
 
 ## Appendix A. Rules and their implementation
 
@@ -945,7 +963,7 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | §8.2 receipt verification | core `release.rs`; CLI `receipt.rs` | `verify_receipt_for`, `verify_receipt`; `run` |
 | §9 security notes | core `extract.rs`, `open.rs`, `release.rs` | `extract` (case collisions), `open`, `HttpFetch::unlock` |
 | §10 identifiers | core `pack.rs`, `manifest.rs`, `argon2id.rs`, `release.rs`; service `app.rs` | `META_FORMAT`, `MANIFEST_FORMAT`, `TAG` (both), `build` |
-| §11 vectors | core `tests/format_vectors.rs`, `tests/format_vectors_gen.rs` | conformance test; `regenerate_format_vectors` |
+| §11 vectors | core `tests/format_vectors.rs`, `tests/format_vectors_gen.rs`; core `seal.rs` | conformance test (`VectorFetch`, `decrypted_tar_sha256`); `regenerate_format_vectors`; `test_support::intercept_deposits` |
 
 ## Appendix B. Differences from plain age
 

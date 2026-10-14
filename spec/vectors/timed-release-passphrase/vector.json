@@ -1,5 +1,5 @@
 {
-  "comment": "§4.2 sealdrop-release stanza; K_release is what the service would return",
+  "comment": "§4.2 sealdrop-release stanza for service https://release.invalid; K_release is what the service would return (harnesses supply it, no network)",
   "expect": "success",
   "expected": {
     "files": [
@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "bf20c30e-95af-44fd-9237-d19e6d563ebc",
-    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
+    "package_id": "3c8b53da-26da-4ec4-94ff-d2b3b4fee52f",
+    "plaintext_tar_sha256": "989bede9b4dc32a78bfea71d354a37e6211a038038161e822b33204d8d24b27c"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,8 +23,8 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "k_release": "pZJ3iAznTH5rcrNBrQDD17rpR2KaJjHQ+SfjOghI3QA",
-    "passphrase": "politely stuck bubbly numbness marxism directly",
+    "k_release": "l+kOgHfJMexpiQSler6tgoGrPCHO4GyvHnJIe1Ysdqo",
+    "passphrase": "myspace preoccupy estimate desecrate prodigal veneering",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "timed-release-passphrase",

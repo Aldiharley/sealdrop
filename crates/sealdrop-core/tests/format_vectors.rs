@@ -1,13 +1,13 @@
 //! Runs every vector in `spec/vectors` against the reference implementation (spec section 11).
 //!
-//! Needs `--features test-support`: the timed-release vectors name the service
-//! `memory://spec.vectors`, which the service-URL rules (section 7.1) accept only in test
-//! builds. No network is ever contacted: `K_release` comes from the vector.
-#![cfg(feature = "test-support")]
+//! Needs no feature: the timed-release vectors name the production-valid service
+//! `https://release.invalid`, and the harness answers the unlock request itself with the
+//! vector's `K_release`. No network is ever contacted.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
 use age::secrecy::SecretString;
 use base64::prelude::{Engine, BASE64_STANDARD_NO_PAD};
@@ -16,7 +16,7 @@ use sealdrop_core::keys::KeyStore;
 use sealdrop_core::open::{open, OpenRequest};
 use sealdrop_core::progress::NoProgress;
 use sealdrop_core::release::{
-    verify_receipt_for, MemoryFetch, ReleaseFetch, SignedReceipt, Unlock,
+    self, verify_receipt_for, MemoryFetch, ReleaseFetch, SignedReceipt, Unlock,
 };
 use sealdrop_core::Error;
 use serde_json::Value;
@@ -41,8 +41,10 @@ fn load(dir: &Path) -> Value {
     serde_json::from_slice(&fs::read(dir.join("vector.json")).expect("vector.json")).unwrap()
 }
 
-/// Serves the vector's `K_release` for any request. The unlock token is not checked here;
-/// the header's own rules are exercised by the decoder.
+/// Serves the vector's `K_release` for any request, in place of the service (spec section 11).
+/// The unlock token is not checked: a vector has no service-side `unlock_token_hash`. The
+/// header's own rules (section 4.2 steps 3 to 6, including section 7.1 for the URL) are
+/// exercised by the decoder before this is called.
 struct VectorFetch([u8; 32]);
 
 impl ReleaseFetch for VectorFetch {
@@ -78,6 +80,44 @@ fn describe<T>(r: &Result<T, Error>) -> String {
     }
 }
 
+/// The release service stand-in for a vector: its `K_release`, or (without one) a service
+/// that reports the window as passed.
+fn fetch_for(v: &Value) -> Result<Box<dyn ReleaseFetch>, String> {
+    Ok(match v["inputs"]["k_release"].as_str() {
+        Some(b) => {
+            let raw = BASE64_STANDARD_NO_PAD
+                .decode(b)
+                .map_err(|e| e.to_string())?;
+            let k: [u8; 32] = raw.try_into().map_err(|_| "k_release is not 32 bytes")?;
+            Box::new(VectorFetch(k))
+        }
+        None => Box::new(MemoryFetch::expired()),
+    })
+}
+
+/// SHA-256 of the decrypted container, obtained without `open` (no manifest, no
+/// extraction): plain age decryption with the vector's identity or passphrase, and its
+/// `K_release` for a timed package.
+fn decrypted_tar_sha256(package: &Path, v: &Value) -> Result<String, String> {
+    let mut inner: Vec<Box<dyn age::Identity>> = Vec::new();
+    if let Some(i) = v["inputs"]["identity"].as_str() {
+        inner.push(Box::new(age::x25519::Identity::from_str(i)?));
+    }
+    if let Some(p) = v["inputs"]["passphrase"].as_str() {
+        let pass = SecretString::from(p.to_string());
+        inner.push(Box::new(sealdrop_core::crypt::scrypt_identity(
+            pass.clone(),
+        )));
+        inner.push(Box::new(sealdrop_core::argon2id::Identity::new(pass)));
+    }
+    let ids: Vec<Box<dyn age::Identity>> =
+        vec![Box::new(release::Identity::new(inner, fetch_for(v)?))];
+    let file = fs::File::open(package).map_err(|e| e.to_string())?;
+    let mut r = sealdrop_core::crypt::decrypt_reader(file, &ids).map_err(|e| e.to_string())?;
+    let (sha, _) = sealdrop_core::hashing::sha256_reader(&mut r).map_err(|e| e.to_string())?;
+    Ok(sha)
+}
+
 fn run_open(dir: &Path, v: &Value, expect: &str) -> Result<(), String> {
     let tmp = tempfile::tempdir().unwrap();
     let files = &v["files"];
@@ -91,16 +131,7 @@ fn run_open(dir: &Path, v: &Value, expect: &str) -> Result<(), String> {
             fs::copy(dir.join(name), work.join(name)).map_err(|e| format!("{name}: {e}"))?;
         }
     }
-    let fetch: Box<dyn ReleaseFetch> = match v["inputs"]["k_release"].as_str() {
-        Some(b) => {
-            let raw = BASE64_STANDARD_NO_PAD
-                .decode(b)
-                .map_err(|e| e.to_string())?;
-            let k: [u8; 32] = raw.try_into().map_err(|_| "k_release is not 32 bytes")?;
-            Box::new(VectorFetch(k))
-        }
-        None => Box::new(MemoryFetch::expired()),
-    };
+    let fetch = fetch_for(v)?;
     let ks = store_for(v, tmp.path());
     let out = tmp.path().join("out");
     let r = open(
@@ -142,10 +173,35 @@ fn run_open(dir: &Path, v: &Value, expect: &str) -> Result<(), String> {
                     return Err(format!("sha256 mismatch for {}", p.display()));
                 }
             }
+            // The known-answer container hash, from a decryption independent of `open`.
+            let want_tar = v["expected"]["plaintext_tar_sha256"]
+                .as_str()
+                .ok_or("no expected.plaintext_tar_sha256")?;
+            let got_tar = decrypted_tar_sha256(&work.join(pkg_name), v)?;
+            if got_tar != want_tar {
+                return Err(format!(
+                    "decrypted container sha256 {got_tar}, expected {want_tar}"
+                ));
+            }
+            // A timed manifest records a real service key (sections 5.2 and 7.2).
+            if let Some(rel) = rep
+                .verify
+                .as_ref()
+                .and_then(|r| r.manifest.release.as_ref())
+            {
+                minisign::PublicKey::from_base64(&rel.service_key)
+                    .map_err(|e| format!("release.service_key: {e}"))?;
+            }
             Ok(())
         }
         ("verify failure", Err(Error::Verify(_))) => Ok(()),
-        ("header failure", Err(Error::Decrypt(_))) => Ok(()),
+        // Section 2.3: `header failure` is a header error or an excessive-work error only.
+        (
+            "header failure",
+            Err(Error::Decrypt(
+                age::DecryptError::InvalidHeader | age::DecryptError::ExcessiveWork { .. },
+            )),
+        ) => Ok(()),
         _ => Err(format!("expected {expect}, got {}", describe(&r))),
     }
 }
@@ -199,6 +255,15 @@ fn run(dir: &Path) -> Result<(), String> {
         return Err("name does not equal the directory name".into());
     }
     let expect = v["expect"].as_str().ok_or("no expect")?.to_string();
+    // Section 11: `n/a` means exactly "no package to try".
+    let stock_age = v["stock_age"].as_str().ok_or("no stock_age")?;
+    let has_package = v["files"]["package"].is_string();
+    if (stock_age == "n/a") == has_package {
+        return Err(format!(
+            "stock_age is {stock_age:?} but the vector {} a package",
+            if has_package { "has" } else { "has no" }
+        ));
+    }
     match expect.as_str() {
         "success" | "verify failure" | "header failure" => run_open(dir, &v, &expect),
         "extract failure" => run_extract(dir, &v),
@@ -279,6 +344,11 @@ fn stock_age_claims() {
                     first.path().unwrap().to_string_lossy(),
                     "sealdrop/meta.json",
                     "{name}: first tar entry"
+                );
+                assert_eq!(
+                    sealdrop_core::hashing::sha256_hex(&out.stdout),
+                    v["expected"]["plaintext_tar_sha256"].as_str().unwrap(),
+                    "{name}: stock age did not output the expected container"
                 );
             }
             "rejects" => assert!(
