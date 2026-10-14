@@ -63,7 +63,18 @@ Notes on the suites:
 
 - `crates/sealdrop-core/tests/cctv.rs` runs all 147 CCTV vectors. 19 hybrid post-quantum vectors are skipped and print the reason. A change that makes a vector fail, or that changes the skipped count, needs an explanation in the PR.
 - `crates/sealdrop-core/tests/malicious_tar.rs` has a hand-built archive for each extraction rule. Add one for any rule you add or change.
+- `crates/sealdrop-core/tests/format_vectors.rs` runs every vector in `spec/vectors/` against the reference implementation, and checks the `stock_age` claims with the Go `age` binary. It needs the `test-support` feature: `SEALDROP_REQUIRE_AGE=1 cargo test -p sealdrop-core --features test-support --test format_vectors`.
 - New behaviour needs a test written first.
+
+### Regenerating the format test vectors
+
+The vectors in `spec/vectors/` are committed. Regenerate them only when the format spec changes, with:
+
+```sh
+SEALDROP_VECTORS_FORCE=1 cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors
+```
+
+Without `SEALDROP_VECTORS_FORCE=1` the generator keeps every vector directory that already exists. Ciphertexts change on every regeneration (age uses fresh randomness, and manifests carry new timestamps and package ids) but what each vector tests does not, so review the diff for semantics, not bytes. Run `format_vectors` afterwards and commit the regenerated files together.
 
 ### Running the release service locally
 

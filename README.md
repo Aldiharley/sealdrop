@@ -25,6 +25,7 @@ Version 0.2. Licence: Apache-2.0.
 - [Hardware keys](#hardware-keys)
 - [Argon2id (optional, non-standard)](#argon2id-optional-non-standard)
 - [Interop with stock age](#interop-with-stock-age)
+- [Format specification](#format-specification)
 - [Security](#security)
 - [Command reference](#command-reference)
 - [Roadmap](#roadmap)
@@ -334,6 +335,10 @@ age -d -i identity.txt report-q3.sealdrop.age | tar -x
 | Timed release | No, by design. Stock age fails with "no identity matched any of the recipients". |
 
 Conformance and interop evidence is in [docs/VALIDATION.md](docs/VALIDATION.md#interop-with-stock-age).
+
+## Format specification
+
+The sealdrop package format is public and released under CC0: the specification is [spec/sealdrop-format-v1.md](spec/sealdrop-format-v1.md). Known-answer test vectors for it are in [spec/vectors/](spec/vectors/), and a conformance test (`crates/sealdrop-core/tests/format_vectors.rs`) runs every one of them against the reference implementation in CI. Other tools are welcome to implement the format.
 
 ## Security
 

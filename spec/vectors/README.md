@@ -37,7 +37,7 @@ for every file key, salt and ephemeral key, and the manifest carries timestamps 
 ## Trying a vector with stock age
 
 ```
-age -d -i keys/store/identity.txt recipient-x25519/package.sealdrop.age | tar -t
+age -d -i keys/store/identity.txt recipient-x25519/report.sealdrop.age | tar -t
 ```
 
 lists `sealdrop/meta.json` first. The Argon2id and timed-release packages are refused by stock age

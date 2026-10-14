@@ -24,6 +24,10 @@ jobs:
       - run: cargo test --workspace --exclude sealdrop-desktop
         env:
           SEALDROP_REQUIRE_AGE: "1"
+      - name: Format-spec conformance vectors
+        run: cargo test -p sealdrop-core --features test-support --test format_vectors
+        env:
+          SEALDROP_REQUIRE_AGE: "1"
   deny:
     runs-on: ubuntu-latest
     steps:
