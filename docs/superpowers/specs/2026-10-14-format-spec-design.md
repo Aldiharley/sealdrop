@@ -81,12 +81,13 @@ Deterministic secrets committed for vectors only: one X25519 identity, the passp
 key pair, one service key pair. They are test material, never used elsewhere.
 
 Vector set: `recipient-x25519`, `armored-x25519`, `passphrase-scrypt`,
-`passphrase-argon2id-compat` (small parameters), `timed-release-x25519`,
-`timed-release-passphrase`, `argon2id-reject-m-too-large`, `argon2id-reject-m-lt-8p`,
-`argon2id-reject-bad-salt`, `manifest-tampered`, `manifest-wrong-comment`,
+`passphrase-argon2id-compat`, `timed-release-x25519`, `timed-release-passphrase`,
+`argon2id-reject-t-too-large`, `argon2id-reject-p-too-large` (the decoder bounds that an
+encoder can produce cheaply; malformed salts or a bad header MAC cannot be generated
+through the encoder), `manifest-tampered`, `manifest-wrong-comment`,
 `ciphertext-tampered`, `tar-reject-traversal`, `tar-reject-symlink`,
-`tar-reject-pax-size`, `tar-reject-long-name-bomb`, `receipt-valid`,
-`receipt-wrong-key`.
+`tar-reject-pax-size`, `tar-reject-long-name-bomb`, `tar-reject-unlisted-file`,
+`receipt-valid`, `receipt-wrong-key`.
 
 Generator: `#[ignore]`d test `regenerate_format_vectors` in `sealdrop-core`
 (`cargo test -p sealdrop-core --features test-support -- --ignored regenerate_format_vectors`),
