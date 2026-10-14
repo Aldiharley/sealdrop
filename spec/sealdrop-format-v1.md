@@ -860,8 +860,9 @@ exactly this schema:
 { "name": "recipient-x25519", "expect": "success",
   "stock_age": "opens" | "opens-interactive" | "rejects" | "n/a",
   "inputs": { "identity": "AGE-SECRET-KEY-1…", "passphrase": "…", "k_release": "<b64>", "signer_key": "RW…", "service_key": "RW…" },
-  "expected": { "package_id": "…", "plaintext_tar_sha256": "<hex>", "files": [ { "path": "…", "size": 0, "sha256": "<hex>" } ] },
-  "files": { "package": "package.sealdrop.age", "manifest": "manifest.json", "signature": "manifest.json.minisig", "tar": "input.tar", "receipt": "receipt.json" },
+  "expected": { "package_id": "…", "plaintext_tar_sha256": "<hex>", "files": [ { "path": "…", "size": 0, "sha256": "<hex>" } ],
+               "release_id": "…", "package_sha256": "<hex>" },
+  "files": { "package": "report.sealdrop.age", "manifest": "report.manifest.json", "signature": "report.manifest.json.minisig", "tar": "input.tar", "receipt": "receipt.json" },
   "comment": "…" }
 ```
 
@@ -873,6 +874,11 @@ exactly this schema:
   it), `n/a` (no package to try).
 - Every key inside `inputs` and `files` is optional; a vector carries only what it needs.
   `files` values are file names inside the vector's directory.
+- `inputs` and `expected` MAY be omitted when a vector needs none (the `tar-reject-*` vectors have
+  neither). `expected.release_id` and `expected.package_sha256` are used by the receipt vectors.
+- `files.package`, `files.manifest` and `files.signature` are the bundle's own file names, so
+  that §5.1 and §5.4 apply unchanged: a harness MUST present them to the decoder under exactly
+  those names (§5.4 step 5 compares `ciphertext.file` with the package's name).
 - Timed-release vectors carry `inputs.k_release`, and their headers name the service
   `memory://spec.vectors`. Conformance harnesses MUST take `K_release` from the vector and
   MUST NOT contact any network. (`memory://` passes §7.1 only in test builds.)

@@ -15,6 +15,12 @@ use sealdrop_core::progress::NoProgress;
 use sealdrop_core::seal::{seal, Kdf, Mode, ReleaseConfig, SealRequest, SealResult};
 use serde_json::{json, Value};
 
+/// The bundle's real file names, exactly as `seal` names them for the input `report`
+/// (section 5.1), so section 5.4 step 5 (`ciphertext.file` equals the package name) holds.
+const PKG: &str = "report.sealdrop.age";
+const MAN: &str = "report.manifest.json";
+const SIG: &str = "report.manifest.json.minisig";
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../spec/vectors")
 }
@@ -61,7 +67,7 @@ fn keys() -> (KeyStore, minisign::KeyPair) {
 
 fn want(name: &str) -> Option<PathBuf> {
     let d = root().join(name);
-    if d.exists() && std::env::var("SEALDROP_VECTORS_FORCE").is_err() {
+    if d.join("vector.json").exists() && std::env::var("SEALDROP_VECTORS_FORCE").is_err() {
         return None;
     }
     let _ = fs::remove_dir_all(&d);
@@ -112,9 +118,10 @@ fn seal_into(
         &NoProgress,
     )
     .unwrap();
-    fs::copy(&res.package, d.join("package.sealdrop.age")).unwrap();
-    fs::copy(&res.manifest, d.join("manifest.json")).unwrap();
-    fs::copy(&res.signature, d.join("manifest.json.minisig")).unwrap();
+    assert_eq!(res.package.file_name().unwrap(), PKG);
+    fs::copy(&res.package, d.join(PKG)).unwrap();
+    fs::copy(&res.manifest, d.join(MAN)).unwrap();
+    fs::copy(&res.signature, d.join(SIG)).unwrap();
     let expected = json!({
         "package_id": res.manifest_doc.package_id,
         "plaintext_tar_sha256": res.pack.tar_sha256,
@@ -138,9 +145,9 @@ fn regenerate_format_vectors() {
     let me = sealdrop_core::crypt::Recipient::parse(&ks.recipient_string().unwrap()).unwrap();
     let signer = ks.signing_public_string().unwrap();
     let bundle_files = json!({
-        "package": "package.sealdrop.age",
-        "manifest": "manifest.json",
-        "signature": "manifest.json.minisig"
+        "package": PKG,
+        "manifest": MAN,
+        "signature": SIG
     });
 
     for (name, armor) in [("recipient-x25519", false), ("armored-x25519", true)] {
@@ -260,7 +267,7 @@ fn regenerate_format_vectors() {
                 sealdrop_core::argon2id::Recipient::with_params(pass, params),
             )];
             let mut w = sealdrop_core::crypt::encrypt_writer(
-                fs::File::create(d.join("package.sealdrop.age")).unwrap(),
+                fs::File::create(d.join(PKG)).unwrap(),
                 &r,
                 false,
             )
@@ -272,7 +279,7 @@ fn regenerate_format_vectors() {
                 json!({"name": name, "expect": "header failure", "stock_age": "rejects",
                 "inputs": {"passphrase": "spec vector passphrase"},
                 "expected": {"plaintext_tar_sha256": report.tar_sha256},
-                "files": {"package": "package.sealdrop.age"}, "comment": why}),
+                "files": {"package": PKG}, "comment": why}),
             );
         }
     }
@@ -299,13 +306,13 @@ fn regenerate_format_vectors() {
                 seal_into(&ks, &d, Mode::Recipients(vec![me.clone()]), false, None);
             match mutate {
                 0 => {
-                    let orig = fs::read_to_string(d.join("manifest.json")).unwrap();
+                    let orig = fs::read_to_string(d.join(MAN)).unwrap();
                     let m = orig.replace("\"spec-vector\"", "\"Spec-vector\"");
                     assert_ne!(orig, m, "classification not found in manifest");
-                    fs::write(d.join("manifest.json"), m).unwrap();
+                    fs::write(d.join(MAN), m).unwrap();
                 }
                 1 => {
-                    let bytes = fs::read(d.join("manifest.json")).unwrap();
+                    let bytes = fs::read(d.join(MAN)).unwrap();
                     let sig = minisign::sign(
                         Some(&ks.signing_public().unwrap()),
                         &ks.signing_key().unwrap(),
@@ -314,13 +321,13 @@ fn regenerate_format_vectors() {
                         None,
                     )
                     .unwrap();
-                    fs::write(d.join("manifest.json.minisig"), sig.into_string()).unwrap();
+                    fs::write(d.join(SIG), sig.into_string()).unwrap();
                 }
                 _ => {
-                    let mut b = fs::read(d.join("package.sealdrop.age")).unwrap();
+                    let mut b = fs::read(d.join(PKG)).unwrap();
                     let i = b.len() - 10;
                     b[i] ^= 1;
-                    fs::write(d.join("package.sealdrop.age"), b).unwrap();
+                    fs::write(d.join(PKG), b).unwrap();
                 }
             }
             write_json(
@@ -456,6 +463,8 @@ fn tar_reject_vectors() {
                 h.set_entry_type(EntryType::XHeader);
                 h.set_size(pax.len() as u64);
                 b.append_data(&mut h, "PaxHeader/a", &pax[..]).unwrap();
+                // A real member follows, so a lenient PAX parser still sees size= attached to it.
+                add(b, "sealdrop/payload/r/a", b"x");
             }),
             "§6.1 a PAX size= override must be refused",
         ),

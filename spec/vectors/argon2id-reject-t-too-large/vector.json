@@ -2,10 +2,10 @@
   "comment": "§4.1 decode bounds: t=11 exceeds the decoder bound of 10",
   "expect": "header failure",
   "expected": {
-    "plaintext_tar_sha256": "c77d3f16eef5933899c17d0b91f6e83dca60521b1667cb7811347bf171dfbded"
+    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
   },
   "files": {
-    "package": "package.sealdrop.age"
+    "package": "report.sealdrop.age"
   },
   "inputs": {
     "passphrase": "spec vector passphrase"

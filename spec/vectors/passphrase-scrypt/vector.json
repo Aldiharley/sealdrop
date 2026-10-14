@@ -14,16 +14,16 @@
         "size": 256
       }
     ],
-    "package_id": "54a00921-7742-40fa-a9fe-ecd6e5662318",
-    "plaintext_tar_sha256": "acdc822f98211a5cdf5ca2ebfa370418f7b05937dc8c9804edb75faf4d43d31e"
+    "package_id": "6cd298e2-4696-4073-afbc-aad277951fca",
+    "plaintext_tar_sha256": "49d7765c99cb7a5f43bfadc9b7bfb1dbac27ae16609bfeec19ac064315b6d9ba"
   },
   "files": {
-    "manifest": "manifest.json",
-    "package": "package.sealdrop.age",
-    "signature": "manifest.json.minisig"
+    "manifest": "report.manifest.json",
+    "package": "report.sealdrop.age",
+    "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "passphrase": "lagoon lizard mumps fedora portion stopwatch",
+    "passphrase": "matchless lyrically passerby item sulfite elastic",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "passphrase-scrypt",

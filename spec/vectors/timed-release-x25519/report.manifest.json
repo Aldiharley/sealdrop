@@ -1,14 +1,14 @@
 {
   "format": "sealdrop-manifest/1",
-  "package_id": "4aa2a36c-e56d-4cf2-9177-004be694548a",
+  "package_id": "c2ac2d7f-de44-4911-ab13-5ba52e6b96f7",
   "tool": "sealdrop 0.2.1",
-  "created": "2026-10-14T12:53:29Z",
+  "created": "2026-10-14T12:59:26Z",
   "ciphertext": {
     "file": "report.sealdrop.age",
-    "size": 5416,
-    "sha256": "e9a66c8006d7686df6b57bb281ab2c7d9bfafab6f37b895937a410ea7c5ee529"
+    "size": 5717,
+    "sha256": "955ac3a30604e8017043b9d4becefbbda5658729435295ea4d1702df49dfc5d7"
   },
-  "plaintext_tar_sha256": "c83d7783843afd7674430c730ba0d5d9b509848f4a043f000b9c719d0bf68854",
+  "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8",
   "recipients": [
     {
       "kind": "x25519",
@@ -17,5 +17,11 @@
   ],
   "signer": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW",
   "classification": "spec-vector",
+  "release": {
+    "service": "memory://spec.vectors",
+    "release_id": "b5bb48ff-4f24-485a-9830-53083fff7be5",
+    "window_secs": 600,
+    "service_key": "memory"
+  },
   "notes": "expires is advisory and is not enforced by any software; release.window_secs is enforced by the named service for the encrypted package only"
 }

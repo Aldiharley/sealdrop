@@ -14,13 +14,13 @@
         "size": 256
       }
     ],
-    "package_id": "94649fb5-6472-4f4f-b352-54a55a806fec",
-    "plaintext_tar_sha256": "26fd005a8852f284c9644d16a906962db2585db48e137ede409c6383b35becbb"
+    "package_id": "70c95099-478b-4c86-a7b4-4a355c93b3f8",
+    "plaintext_tar_sha256": "49d7765c99cb7a5f43bfadc9b7bfb1dbac27ae16609bfeec19ac064315b6d9ba"
   },
   "files": {
-    "manifest": "manifest.json",
-    "package": "package.sealdrop.age",
-    "signature": "manifest.json.minisig"
+    "manifest": "report.manifest.json",
+    "package": "report.sealdrop.age",
+    "signature": "report.manifest.json.minisig"
   },
   "inputs": {
     "identity": "AGE-SECRET-KEY-1ETV7QCZFYLAUGQHXTVPLY3CSCF59SV7P2MW0MAK7HVKWDWAL6DPS79FGCY",

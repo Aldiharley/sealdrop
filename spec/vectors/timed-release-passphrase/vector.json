@@ -14,17 +14,17 @@
         "size": 256
       }
     ],
-    "package_id": "7d68d84b-6e12-46c7-8178-1bfe64ef5495",
-    "plaintext_tar_sha256": "c77d3f16eef5933899c17d0b91f6e83dca60521b1667cb7811347bf171dfbded"
+    "package_id": "bf20c30e-95af-44fd-9237-d19e6d563ebc",
+    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
   },
   "files": {
-    "manifest": "manifest.json",
-    "package": "package.sealdrop.age",
-    "signature": "manifest.json.minisig"
+    "manifest": "report.manifest.json",
+    "package": "report.sealdrop.age",
+    "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "k_release": "23Lwpppk1vyYttqnH3ReTNLE1BWoe37dKdZ5hDG8+Js",
-    "passphrase": "irritant pretender slot deserving vagueness splotchy",
+    "k_release": "pZJ3iAznTH5rcrNBrQDD17rpR2KaJjHQ+SfjOghI3QA",
+    "passphrase": "politely stuck bubbly numbness marxism directly",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "timed-release-passphrase",

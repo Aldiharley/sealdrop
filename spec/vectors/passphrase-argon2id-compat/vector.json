@@ -14,16 +14,16 @@
         "size": 256
       }
     ],
-    "package_id": "e5e40cdc-a337-4951-8c4d-5a1fab86ea75",
-    "plaintext_tar_sha256": "c77d3f16eef5933899c17d0b91f6e83dca60521b1667cb7811347bf171dfbded"
+    "package_id": "2610064b-8dce-487f-8366-5c0707b70533",
+    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
   },
   "files": {
-    "manifest": "manifest.json",
-    "package": "package.sealdrop.age",
-    "signature": "manifest.json.minisig"
+    "manifest": "report.manifest.json",
+    "package": "report.sealdrop.age",
+    "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "passphrase": "writing depose ether alibi game outgrow",
+    "passphrase": "blog trout sierra unabashed oppressed tapping",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "passphrase-argon2id-compat",

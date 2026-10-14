@@ -42,3 +42,25 @@ age -d -i keys/store/identity.txt recipient-x25519/package.sealdrop.age | tar -t
 
 lists `sealdrop/meta.json` first. The Argon2id and timed-release packages are refused by stock age
 ("no identity matched any of the recipients"), as the `stock_age` field of each vector says.
+
+## Preserving bytes
+
+The vectors are byte-exact. `.gitattributes` marks `spec/vectors/**` as `-text` so git never
+converts line endings; keep that rule if you vendor the directory. In particular
+`armored-x25519/report.sealdrop.age` contains CRLF line endings (the age armor writer emits
+them), and its hash is recorded in the signed manifest, so copying the vectors outside git
+(archives, other VCS, editors that normalise newlines) must preserve every byte.
+
+## Bundle file names
+
+Packages are stored under the bundle's real names (`report.sealdrop.age`,
+`report.manifest.json`, `report.manifest.json.minisig`), because the manifest records
+`ciphertext.file` and a decoder compares it with the package's name (spec §5.4 step 5). A harness
+must present them to the decoder under exactly those names.
+
+## Timed-release manifests
+
+The timed-release vectors are sealed against the in-process `memory://spec.vectors` seam, which has
+no signing key, so their manifests carry `release.service_key: "memory"` rather than a minisign
+public key. Receipt checking against a real service key is covered by `receipt-valid` and
+`receipt-wrong-key`.

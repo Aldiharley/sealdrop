@@ -14,17 +14,17 @@
         "size": 256
       }
     ],
-    "package_id": "95d4256c-f145-4b7a-bf85-048b961125fe",
-    "plaintext_tar_sha256": "c77d3f16eef5933899c17d0b91f6e83dca60521b1667cb7811347bf171dfbded"
+    "package_id": "c2ac2d7f-de44-4911-ab13-5ba52e6b96f7",
+    "plaintext_tar_sha256": "c0c5f5efb2fa51a0e5f4ecbea1d0c0dd41fa044a8453d2bd12924c6957dfada8"
   },
   "files": {
-    "manifest": "manifest.json",
-    "package": "package.sealdrop.age",
-    "signature": "manifest.json.minisig"
+    "manifest": "report.manifest.json",
+    "package": "report.sealdrop.age",
+    "signature": "report.manifest.json.minisig"
   },
   "inputs": {
     "identity": "AGE-SECRET-KEY-1ETV7QCZFYLAUGQHXTVPLY3CSCF59SV7P2MW0MAK7HVKWDWAL6DPS79FGCY",
-    "k_release": "jbN4iGRG+GgtJGF6V4qDdEx3lcRIiwlsw8pm++ItvIA",
+    "k_release": "96PviJXuiPc8W2bU99ACcu5JyZVtEMnu6/7m++ZYqG8",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "timed-release-x25519",
