@@ -50,7 +50,7 @@ These are the non-goals from the [design spec](docs/superpowers/specs/2026-10-13
 
 ## Install
 
-**Windows binaries:** download from the [v0.2.0 release](https://github.com/Aldiharley/sealdrop/releases/tag/v0.2.0): the desktop app as an MSI or NSIS installer, and `sealdrop-0.2.0-windows-x86_64.zip` with `sealdrop.exe` (CLI) and `sealdrop-release.exe` (service). `SHA256SUMS` is alongside. The installers are not code-signed, so Windows SmartScreen warns on first run.
+**Windows binaries:** download from the [v0.2.1 release](https://github.com/Aldiharley/sealdrop/releases/tag/v0.2.1): the desktop app as an MSI or NSIS installer, and `sealdrop-0.2.1-windows-x86_64.zip` with `sealdrop.exe` (CLI) and `sealdrop-release.exe` (service). `SHA256SUMS` is alongside. The installers are not code-signed, so Windows SmartScreen warns on first run.
 
 Other platforms: build from source. You need a recent stable Rust toolchain (`rust-toolchain.toml` selects `stable`; the minimum is Rust 1.85).
 

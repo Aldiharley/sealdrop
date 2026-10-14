@@ -265,7 +265,8 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
       const name = String(args.name ?? "");
       const key = String(args.key ?? "");
       if (!/^[A-Za-z0-9_-]+$/.test(name)) throw "key store error: invalid trusted name";
-      if (!/^RWQ[A-Za-z0-9+/]{40,}$/.test(key)) throw "key store error: invalid public key: base64 decode failed";
+      // Same shape the real backend accepts: a 56-char base64 minisign key, "RW" + Q/R/S/T.
+      if (!/^RW[QRST][A-Za-z0-9+/]{53}$/.test(key)) throw "key store error: invalid public key: base64 decode failed";
       if (state.trusted.some((t) => t.name === name)) throw `a signer named \`${name}\` already exists`;
       state.trusted.push({ name, key });
       return null;

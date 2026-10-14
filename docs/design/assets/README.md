@@ -13,3 +13,7 @@ The Tauri icon set under `apps/desktop/src-tauri/icons/` is derived from `icon.p
 with `cd apps/desktop && npx tauri icon ../../docs/design/assets/icon.png` (the Android
 and iOS folders it also writes are not used by the desktop app and are not kept). The
 earlier pre-generation stand-in, `icon-placeholder.png`, has been removed.
+
+`icon-app.png` is `icon.png` cropped to the wax seal (bbox 234–790 px, 22 % margin) so the
+seal fills the canvas: the uncropped tile shrank to a pink dot at 32 px. The Tauri icon set
+is generated from `icon-app.png`.

@@ -153,8 +153,14 @@ export function validSignerName(n: string): boolean {
   return /^[A-Za-z0-9_-]+$/.test(n);
 }
 
+/**
+ * A minisign public key is 42 bytes ("Ed" + 8-byte key id + 32-byte key) in base64,
+ * so it is exactly 56 characters and starts with "RW" followed by Q, R, S or T (the
+ * third character carries the first bits of the key id). This is only a pre-check;
+ * the backend parses the key for real.
+ */
 export function looksLikeSignerKey(k: string): boolean {
-  return /^RWQ[A-Za-z0-9+/]{40,}={0,2}$/.test(k.trim());
+  return /^RW[QRST][A-Za-z0-9+/]{53}$/.test(k.trim());
 }
 
 /** True for YYYY-MM-DD that is a real calendar date. */

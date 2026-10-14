@@ -179,7 +179,7 @@ export default function Verify({ active }: { active: boolean }) {
                       setAltKey(v);
                       setAltError(null);
                     }}
-                    placeholder="Paste a signer key (starts with RWQ)"
+                    placeholder="Paste a signer key (starts with RW)"
                     mono
                     error={altError}
                     onEnter={() => document.getElementById("verify-alt-check")?.click()}

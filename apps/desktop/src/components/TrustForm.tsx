@@ -88,7 +88,7 @@ export function TrustForm({ signerKey, buttonLabel, existing = [], onTrusted, na
         setKey(v);
         setKeyErr(null);
       }}
-      placeholder="Signer key (starts with RWQ)"
+      placeholder="Signer key (starts with RW)"
       error={keyErr}
       disabled={busy}
       mono

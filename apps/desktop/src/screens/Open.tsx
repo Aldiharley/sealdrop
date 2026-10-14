@@ -621,7 +621,7 @@ export default function Open({ active }: { active: boolean }) {
                   if (expected.trim() !== checkedKey.current) void recheck();
                 }}
                 onEnter={() => void recheck()}
-                placeholder="Paste a signer key (starts with RWQ)"
+                placeholder="Paste a signer key (starts with RW)"
                 helper="Only needed for a signer you haven't trusted."
                 mono
                 disabled={busyWork}
