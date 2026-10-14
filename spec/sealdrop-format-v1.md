@@ -225,8 +225,10 @@ Standard recipient types an encoder MAY use:
 | `plugin:<name>` | `age1<name>1…` | defined by the plugin |
 | `scrypt` | passphrase | `scrypt` |
 
-Note: in the reference, a recipient string starting `age1pq1` is parsed as a plugin recipient
-for a plugin named `pq`, not as a native type.
+Note: `age1pq1…` is a different type: age's native ML-KEM-768 + X25519 recipient (stanza
+`mlkem768x25519`, age v1.3). The reference does not support it; its parser treats such a string
+as a recipient for a plugin named `pq`. Encoders MUST NOT record such a recipient as
+`hybrid-pq`.
 
 The reference's age library (Rust `age` 0.12) appends one random `*-grease` stanza to every
 header that has no `scrypt` stanza. Where this document says a stanza MUST "stand alone", grease

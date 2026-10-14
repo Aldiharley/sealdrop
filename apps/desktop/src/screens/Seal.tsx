@@ -580,7 +580,7 @@ export default function Seal({ active }: { active: boolean }) {
                       setRecError(null);
                     }}
                     inputRef={recInput}
-                    placeholder="Paste a recipient (age1…, age1pq… or a plugin key)"
+                    placeholder="Paste a recipient (age1…, age1tagpq1… or a plugin key)"
                     helper="Each recipient opens the package with their own key."
                     error={recError}
                     disabled={busy}

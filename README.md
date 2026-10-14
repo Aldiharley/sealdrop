@@ -358,7 +358,7 @@ Report a vulnerability as described in [SECURITY.md](SECURITY.md).
 **Key store.** Keys are plain files you can inspect: `identity.txt` (age secret key), `sign.key` and `sign.pub` (minisign), and `trusted/<name>.pub`. They live in `%APPDATA%\sealdrop` on Windows and `~/.config/sealdrop` on Linux and macOS, with mode 0600 on Unix. Set `SEALDROP_HOME` to use another folder. Back up `identity.txt`: without it, packages sealed only to you cannot be opened.
 
 **Known limitations.**
-- **19 post-quantum conformance vectors are skipped.** Of the 147 C2SP CCTV age vectors, 128 pass, 19 are skipped and none fail. The skipped ones are the hybrid (`age1pq`) vectors that need a post-quantum identity type, which age 0.12 does not provide. sealdrop can encrypt *to* `age1pq` recipients, but cannot act as one yet.
+- **19 post-quantum conformance vectors are skipped.** Of the 147 C2SP CCTV age vectors, 128 pass, 19 are skipped and none fail. The skipped ones are the vectors for age's native post-quantum type (`age1pq1…`, ML-KEM-768 + X25519), which need an identity type that age 0.12 does not provide. Native `age1pq1…` keys (from `age-keygen -pq`) are not supported yet. sealdrop can encrypt *to* age's tagged hybrid type `age1tagpq1…` (ML-KEM-768 + P-256), but has no identity for it, so it cannot open such packages.
 - **Case-insensitive file systems.** A folder containing both `A.txt` and `a.txt`, sealed on Linux, loses one of them when opened on Windows or macOS.
 - Timed release needs the service to be up at open time, and trusts the service host's clock.
 - The interactive passphrase prompt shows what you type (see [Passphrase mode](#passphrase-mode)).
@@ -383,7 +383,7 @@ Main `seal` flags:
 
 | Flag | Meaning |
 |---|---|
-| `-r, --recipient <R>` | `age1...`, `age1pq...` or `age1<plugin>1...`. Repeatable. |
+| `-r, --recipient <R>` | `age1...`, `age1tagpq1...` (hybrid post-quantum, encrypt-only) or `age1<plugin>1...`. Repeatable. Native `age1pq1...` keys are not supported yet. |
 | `--passphrase`, `--words eff\|bip39`, `--word-count N` | Generated passphrase. |
 | `--kdf-profile default\|high` | scrypt 2^18 or 2^20 (Argon2id `compat` or `desktop` profile with `--argon2id`). |
 | `--argon2id` | Non-standard stanza. Not openable in stock age. |

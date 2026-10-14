@@ -91,7 +91,7 @@ The signature over the ciphertext hash also closes age's key-commitment ambiguit
 
 - The recipient creates an age key pair, or a hardware-backed identity, and sends only the **public** recipient string.
 - Encryption targets the recipient, plus the sender's own key so they can reopen it, plus the optional escrow key (section 6).
-- Supports X25519 and the hybrid post-quantum `age1pq` recipients ([age v1.3.0](https://github.com/FiloSottile/age/releases/tag/v1.3.0)).
+- Supports X25519 recipients and, encrypt-only, age's tagged hybrid post-quantum recipients `age1tagpq1…` (ML-KEM-768 + P-256, from the Rust `age` crate 0.12). Native `age1pq1…` recipients (ML-KEM-768 + X25519, [age v1.3.0](https://github.com/FiloSottile/age/releases/tag/v1.3.0), `age-keygen -pq`) are not supported yet.
 - The file key is 128 random bits, so offline cracking is infeasible regardless of any KDF.
 
 ### 5.2 Passphrase (fallback)

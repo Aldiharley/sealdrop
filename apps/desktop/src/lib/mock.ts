@@ -146,7 +146,7 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
       const s = String(args.s ?? "").trim();
       if (!/^age1[a-z0-9]{16,}$/.test(s)) throw `invalid recipient \`${s}\``;
       const fingerprint = hash16(s);
-      if (s.startsWith("age1pq")) return { kind: "hybrid-pq", fingerprint, plugin: null, allowed: true };
+      if (s.startsWith("age1tagpq1")) return { kind: "hybrid-pq", fingerprint, plugin: null, allowed: true };
       const m = /^age1([a-z]+)1/.exec(s);
       if (m && m[1] !== "qx" && m[1] !== "q" && m[1].length > 2) {
         const allowed = ["yubikey", "tpm", "se"].includes(m[1]);

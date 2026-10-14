@@ -31,7 +31,7 @@ pub enum KdfProfile {
 pub struct Args {
     /// File or folder to seal
     pub input: PathBuf,
-    /// Recipient (age1..., age1pq..., or age1<plugin>1...). Repeatable.
+    /// Recipient (age1..., age1tagpq1... hybrid post-quantum, or age1<plugin>1...). Repeatable.
     #[arg(short = 'r', long = "recipient")]
     pub recipients: Vec<String>,
     /// Generate a passphrase instead of using recipients (it is printed once, to stdout)
