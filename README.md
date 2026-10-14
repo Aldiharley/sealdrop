@@ -50,9 +50,9 @@ These are the non-goals from the [design spec](docs/superpowers/specs/2026-10-13
 
 ## Install
 
-There are no published release binaries for 0.2 yet. Build from source.
+**Windows binaries:** download from the [v0.2.0 release](https://github.com/Aldiharley/sealdrop/releases/tag/v0.2.0): the desktop app as an MSI or NSIS installer, and `sealdrop-0.2.0-windows-x86_64.zip` with `sealdrop.exe` (CLI) and `sealdrop-release.exe` (service). `SHA256SUMS` is alongside. The installers are not code-signed, so Windows SmartScreen warns on first run.
 
-You need a recent stable Rust toolchain (`rust-toolchain.toml` selects `stable`; the minimum is Rust 1.85).
+Other platforms: build from source. You need a recent stable Rust toolchain (`rust-toolchain.toml` selects `stable`; the minimum is Rust 1.85).
 
 ```sh
 git clone https://github.com/Aldiharley/sealdrop
@@ -74,7 +74,7 @@ cargo install tauri-cli --version "^2" --locked   # once
 cargo tauri build
 ```
 
-On Windows this produces an exe, an MSI and an NSIS installer under `target/release/` (see [docs/VALIDATION.md](docs/VALIDATION.md#desktop-build) for the paths and sizes of the 0.2 build). When release binaries are published they will appear on the [Releases page](https://github.com/Aldiharley/sealdrop/releases); until then that page has nothing to download. The installers were built but not installed in the 0.2 validation run; the built exe was started and driven.
+On Windows this produces an exe, an MSI and an NSIS installer under `target/release/` (see [docs/VALIDATION.md](docs/VALIDATION.md#desktop-build) for the paths and sizes of the 0.2 build). The published installers on the [Releases page](https://github.com/Aldiharley/sealdrop/releases) are these same artefacts, rebuilt from the tagged commit. In the 0.2 validation run the built exe was started and driven; the installers were not installed.
 
 ## Quick start
 
