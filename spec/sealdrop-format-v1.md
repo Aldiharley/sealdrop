@@ -10,21 +10,24 @@ SHA-256 of the exact ciphertext, so a recipient can check what was delivered bef
 anything. Two optional age stanzas are defined: `sealdrop-argon2id` (Argon2id passphrases) and
 `sealdrop-release` (timed release, where a key-release service hands out a second key only
 during a window that starts at the first unlock). This document also defines the HTTP protocol
-of that service and the signed receipts it issues. Every rule here describes what the reference
-implementation does; Appendix A names the code for each one.
+of that service and the signed receipts it issues. It describes the format as implemented by
+sealdrop 0.2.1; where the reference implementation falls short of a MUST, Appendix C says so.
+Appendix A names the code for each rule.
 
 ## 1. Scope and goals
 
 Goals:
 
-1. Any regular file, or any folder of regular files and directories, is restored exactly: the
-   same names, the same bytes, the same directory tree.
+1. Any regular file, or any folder of regular files and directories, is restored exactly (the
+   same names, bytes and directory tree), subject to the path rules of §3.4 and the limits of
+   §6.
 2. Interoperability. A package whose age header contains only standard age stanzas MUST be
-   decryptable by any conforming age v1 implementation, and the decrypted container MUST be
-   extractable by any ustar tar reader.
+   decryptable by any age v1 implementation that supports the recipient types used, and the
+   decrypted container MUST be extractable by any ustar tar reader.
 3. Proof of what was delivered: a signed manifest binds the ciphertext's SHA-256 and size.
-4. Optional timed release: the encrypted package can be opened only during a window enforced by
-   a key-release service.
+4. Optional timed release: a key-release service hands out the wrapping key (`K_release`, §4.2)
+   only during a window that starts at the first unlock. The window controls the release of
+   that key, not who keeps it (§9).
 
 Non-goals:
 
@@ -35,6 +38,8 @@ Non-goals:
 Out of scope: command-line flags, user interfaces, local key storage, deposit-token issuance.
 
 ## 2. Conventions
+
+### 2.1 Keywords and encodings
 
 - The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED,
   MAY and OPTIONAL are to be interpreted as described in RFC 2119 and RFC 8174 when, and only
@@ -55,10 +60,38 @@ Out of scope: command-line flags, user interfaces, local key storage, deposit-to
 - **minisign** means https://jedisct1.github.io/minisign/. A minisign public key is 42 bytes
   (`Ed`, 8-byte key id, 32-byte Ed25519 key) encoded in standard base64: 56 characters that
   start with `RW`.
-- **JSON** is RFC 8259, UTF-8. "Pretty JSON" means two-space indentation as produced by the
-  reference (`serde_json` pretty printer); where bytes are signed, the signed bytes are what
-  counts, not any re-serialisation.
 - `KiB`, `MiB` and `GiB` are powers of 1024.
+
+### 2.2 JSON
+
+JSON is RFC 8259, UTF-8. "Pretty JSON" means two-space indentation as produced by the reference
+(`serde_json` pretty printer). Where bytes are signed, the signed bytes are what counts, not any
+re-serialisation. When reading `meta.json`, `manifest.json`, receipts or service responses,
+decoders MUST accept any whitespace layout and any key order, MUST ignore unknown keys, and
+MUST reject an object that repeats a known key. Sizes, counts and `window_secs` are JSON
+integers (no fraction, no exponent, not negative).
+
+### 2.3 Error classes
+
+Decoders report these classes. The names are used by §4, §5, §6 and the vectors (§11).
+
+| Class | Meaning | age 0.12 equivalent |
+|---|---|---|
+| header error | A malformed header or stanza (wrong argument count, bad base64, bad length, bad parameter). | `DecryptError::InvalidHeader` |
+| excessive-work error | KDF parameters above the decoder's bounds (§4, §4.1). No derivation is attempted. | `DecryptError::ExcessiveWork` |
+| decryption failure | Wrong key or passphrase, or any AEAD or header-MAC failure. | `DecryptionFailed`, `InvalidMac` |
+| no matching keys | No stanza is addressed to any available identity. | `DecryptError::NoMatchingKeys` |
+| release error | The unlock request (§7.3) fails or returns a status other than 200; 410 means the window has passed. | `DecryptError::Io` (wrapping it) |
+| verification failure | Any failure of §5.4 or §8.2. | — |
+| extraction failure | Any rejection in §6. | — |
+
+As in age, an identity that recognises a stanza but fails on it returns an error, and that
+error ends decryption: the decoder does not go on to try later stanzas or identities. Only a
+stanza the identity does not recognise is skipped. The vectors rely on this.
+
+Vector `expect` values (§11) map as follows: `header failure` = header error or excessive-work
+error; `verify failure` = verification failure; `extract failure` = extraction failure;
+`receipt failure` = verification failure in §8.2; `success` and `receipt ok` = no error.
 
 ## 3. Plaintext container
 
@@ -114,7 +147,7 @@ decoders MUST reject one.
 | `files[].size` | integer | Size in bytes. |
 | `files[].sha256` | string | SHA-256 of the file's bytes. |
 
-Each `path` MUST appear at most once in `files`. Readers MUST ignore unknown fields.
+Each `path` MUST appear at most once in `files`. JSON is read as §2.2 says.
 
 Example (folder `report` holding `a.txt` and `sub/b.html`):
 
@@ -173,7 +206,7 @@ A path is valid only if all of the following hold:
   link given as the input itself is followed.) Hard-linked files are packed as independent
   regular files; tar hard-link entries are never written.
 - Names that are not valid Unicode MUST be refused, not converted.
-- Every listed file MUST be written exactly once, and nothing unlisted may be written.
+- Every listed file MUST be written exactly once, and unlisted files MUST NOT be written.
 - The encoder hashes every file before writing the archive (so `meta.json` can come first). It
   MUST then verify, while writing, that each file still has the recorded size and SHA-256, and
   MUST fail without producing a package if any file changed.
@@ -260,7 +293,8 @@ NOT write them.
 
 Stand-alone rule: the stanza MUST be the only real stanza in the header. The reference
 declares the age label set `{"sealdrop-argon2id"}`, which makes age refuse to combine it with
-any other recipient. The manifest records it as kind `argon2id` (§5.2).
+any other recipient. The reference decoder does not itself reject extra real stanzas next to a
+`sealdrop-argon2id` stanza. The manifest records it as kind `argon2id` (§5.2).
 
 ### 4.2 `sealdrop-release` (timed release)
 
@@ -309,7 +343,7 @@ Encoding:
 6. Deposit `K_release` with the service (§7.2) before publishing the manifest.
 
 Stand-alone rule: the stanza MUST be the only real stanza in the header (label set
-`{"sealdrop-release"}`). No inner stanza may appear in the header in the clear. The sender's
+`{"sealdrop-release"}`). Inner stanzas MUST NOT appear in the header in the clear. The sender's
 own key is NOT added to a timed package unless the sender lists it explicitly. The reference
 decoder does not itself reject extra real stanzas next to a `sealdrop-release` stanza.
 
@@ -370,7 +404,7 @@ Pretty JSON, at most 1 MiB. Readers MUST ignore unknown fields.
 | `plaintext_tar_sha256` | string | yes | SHA-256 of the container (§3) before encryption. |
 | `recipients` | array | yes | One entry per real recipient (see below). |
 | `recipients[].kind` | string | yes | `x25519`, `hybrid-pq`, `plugin:<name>`, `scrypt` or `argon2id`. |
-| `recipients[].fingerprint` | string | yes | First 16 hex characters of the SHA-256 of the recipient string's UTF-8 bytes; the empty string for `scrypt` and `argon2id`. |
+| `recipients[].fingerprint` | string | yes | First 16 hex characters of the SHA-256 of the recipient string's UTF-8 bytes, where the string is the canonical form re-rendered after parsing (plugin recipients keep the case they were given in); the empty string for `scrypt` and `argon2id`. |
 | `signer` | string | yes | The signer's minisign public key (56 characters). Not trusted by itself (§5.4). |
 | `classification` | string | no | Free text chosen by the sender. |
 | `expires` | string | no | Advisory date, normally `YYYY-MM-DD`. Never enforced; readers MUST NOT rely on its format. |
@@ -468,9 +502,10 @@ a verification error.
 5. `ciphertext.file` MUST contain no `/` and no `\`, and MUST equal the package's bare file
    name.
 6. Compute the SHA-256 and the byte count of the whole package file. Both MUST equal
-   `ciphertext.sha256` and `ciphertext.size`. The bytes that are hashed MUST be the bytes that
-   are then decrypted: the reference hashes and decrypts through one open file handle, so the
-   path cannot be swapped in between.
+   `ciphertext.sha256` and `ciphertext.size`. Decoders MUST hash and decrypt the same open
+   file. The reference hashes the open handle in one pass and decrypts it in a second pass.
+   This defeats a swap of the path, but not an in-place rewrite of the file between the two
+   passes. Implementations SHOULD hash while decrypting, or decrypt from a private copy.
 
 Decoders MAY also compare the SHA-256 of the decrypted container with `plaintext_tar_sha256`;
 the reference does not.
@@ -510,9 +545,14 @@ stream and:
 6. Stop with an error once more than 65 GiB of raw stream has been read.
 
 The size field is parsed as the tar crate does: GNU base-256 if the high bit of its first byte
-is set (the last 8 bytes, big-endian), otherwise octal up to the first NUL, surrounding spaces
-trimmed. Payloads are padded to 512 bytes. These rules make the guard's view of entry
-boundaries match the parser's: no entry's effective size may differ from its header size.
+is set (the last 8 bytes, big-endian), otherwise octal digits up to the first NUL, with
+surrounding white space removed (Rust `str::trim`). A size field that does not parse is an
+error. Payloads are padded to 512 bytes. These rules make the guard's view of entry boundaries
+match the parser's: no entry's effective size can differ from its header size.
+
+A PAX `x` header without `size=` is accepted and applied by the tar parser; in particular a
+`path=` record is honoured, and the resulting path then goes through §3.4. Encoders still MUST
+NOT write PAX headers (§3.1).
 
 ### 6.2 Extraction algorithm
 
@@ -536,8 +576,9 @@ boundaries match the parser's: no entry's effective size may differ from its hea
    5. The header `size` field MUST equal the entry's effective size.
    6. The size MUST equal the listed `size`, MUST NOT exceed the per-file limit, and the
       running total MUST NOT exceed 64 GiB.
-   7. Write the file into the temporary tree while hashing it. The written byte count and the
-      SHA-256 MUST equal the listed values; otherwise reject.
+   7. Write the file into the temporary tree while hashing it, creating any missing parent
+      directories (directory entries are optional). The written byte count and the SHA-256
+      MUST equal the listed values; otherwise reject.
 6. Every file listed in `meta.json` MUST have been seen; reject if any is missing.
 7. Move `<temp>/<root>` into place (§6.3).
 
@@ -570,11 +611,17 @@ normative.
 The base URL comes from the sender or from a file header, so a client MUST validate it before
 building any request from it:
 
-1. Reject it if it contains whitespace, a control character, `?`, `#`, `@` or `\`.
+1. Reject it if it contains any Unicode White_Space character, any character of General
+   Category Cc, or any of `?`, `#`, `@`, `\`.
 2. It MUST have the form `<scheme>://<authority>[/<path>]` with a non-empty authority (the
    text up to the first `/` after `://`).
 3. The authority is `<host>[:<port>]`, where an IPv6 host is written in brackets
-   (`[::1]:8787`). The host MUST be non-empty. A port, if present, MUST be 1 to 5 ASCII digits.
+   (`[::1]:8787`). The host MUST be non-empty. A port, if present, MUST be 1 to 5 ASCII digits
+   (the value is not range-checked). Without brackets, the reference splits the authority at
+   its LAST `:` and does not validate the host further: `https://a:b` is rejected (port `b`),
+   `https://h:` is rejected (empty port), but `https://a:b:443` passes validation with host
+   `a:b` and fails only when the HTTP library parses it. Clients MAY validate the host more
+   strictly.
 4. The scheme MUST be `https`, or `http` only when the host is exactly `localhost`,
    `127.0.0.1` or `[::1]`. Schemes and hosts are compared case-sensitively.
 5. Remove trailing `/` characters. Endpoints are formed by appending `/v1/…` to the result.
@@ -668,19 +715,23 @@ verify that manifest (§5.4), as the reference does.
 - **Clock.** The window is enforced only against the service's own clock; no client-supplied
   time is trusted. The host MUST run NTP or an equivalent time sync.
 - **Secrets at rest.** Unlock tokens and deposit tokens are stored only as SHA-256 hashes.
-  `K_release` is never logged and never appears in receipts.
-- **Key deletion.** A key is deleted on the first unlock attempt at or after `expires_at`, and
-  a sweep that runs at least every 60 seconds deletes the key of every release whose window
-  has passed. Records without keys are kept for receipts during the retention period.
+  `K_release` is stored as deposited (base64, in plaintext) in the reference's SQLite database
+  until deleted; it is never logged and never appears in receipts. Deleting it sets the column
+  to NULL with SQLite `secure_delete` on, so freed pages are overwritten.
+- **Key deletion.** A key is deleted on the first unlock attempt that carries the correct token
+  at or after `expires_at` (a wrong token gets 403 first and deletes nothing), and a sweep that
+  runs at least every 60 seconds deletes the key of every release whose window has passed.
+  Records without keys are kept for receipts during the retention period.
 - **Retention.** Records are purged a retention period after their window ends. A release that
   was never unlocked is purged, key included, a retention period after the deposit. The
   operator default is 90 days (configurable from 1 to 3650). A timed package that is never
-  opened therefore stops working at that point ("release not found"). Senders MUST be told
-  this.
-- **Rate limiting.** Requests are rate-limited per client address (reference: token bucket,
-  burst 60, refill 0.5 per second, answering 429). The `X-Forwarded-For` header (its first
-  address) is used only when the operator opts in because the service sits behind a proxy
-  that sets that header itself; otherwise the TCP peer address is used.
+  opened therefore stops working at that point ("release not found"). Sender tools MUST
+  disclose this to the sender.
+- **Rate limiting.** Every request, `/healthz` included, is rate-limited per client address
+  (reference: token bucket, burst 60, refill 0.5 per second, answering 429). The first address
+  in `X-Forwarded-For` is used only when the operator opts in because the service sits behind
+  a proxy that sets that header itself; otherwise, and whenever that header is absent or its
+  first entry is not an IP address, the TCP peer address is used.
 - **Body limit.** Request bodies over 16 KiB are rejected with 413.
 
 ### 7.6 Health
@@ -758,13 +809,18 @@ integrity-only check if it labels the result as not pinned.
 - **What the service learns.** The release id, the package's SHA-256, the window, the deposit
   and unlock times, the unlock count and client addresses. It never sees the file key, the file,
   its name or any plaintext; `K_release` alone unwraps nothing.
-- **Limits of timed release.** It cannot recall plaintext once decrypted. The recipient's clock
-  is irrelevant; only the service clock counts. The service must be reachable during the
-  window, and must still hold the record (§7.5 retention). A compromised or colluding service
-  can release the key at any time.
-- **Argon2id.** With the reference's parameter bounds, Argon2id adds little over scrypt at
-  log2 N = 18 for passphrases of 6 or more random words, and it costs interoperability: stock
-  age cannot open such files. Encoders SHOULD default to scrypt.
+- **Limits of timed release.** The window controls when the service releases `K_release`, not
+  who holds it afterwards. The service returns `K_release` in the clear (§7.3); a recipient
+  who keeps it, or keeps the age file key, can open the package after the window. Timed release
+  cannot recall plaintext once decrypted. The recipient's clock is irrelevant; only the service
+  clock counts. The service must be reachable during the window, and must still hold the
+  record (§7.5 retention). A compromised or colluding service can release the key at any
+  time.
+- **Argon2id.** For generated passphrases of 6 or more random words, Argon2id adds little over
+  scrypt at log2 N = 18: the repository's `RESEARCH.md` ("Entropy versus KDF cost") estimates
+  that moving between common KDF settings changes attack cost by about 100 to 200 times, while
+  six random words instead of a human password change it by about 2^40. Argon2id also costs
+  interoperability: stock age cannot open such files. Encoders SHOULD default to scrypt.
 - **Case-insensitive file systems.** Two paths that differ only in case (`a.txt`, `A.txt`) pass
   §3.4 but name the same file on such file systems. The reference then writes the second file
   over the first: extraction succeeds and reports two files, but one file remains, under the
@@ -797,7 +853,8 @@ The version anchors are:
 ## 11. Test vectors
 
 Vectors live in `spec/vectors/<name>/`: one directory per vector, holding `vector.json` and
-the files it names. `vector.json` has exactly this schema:
+the files it names. They are added in the same release as this document. `vector.json` has
+exactly this schema:
 
 ```json
 { "name": "recipient-x25519", "expect": "success",
@@ -815,20 +872,23 @@ the files it names. `vector.json` has exactly this schema:
   (stock age decrypts it after prompting for `inputs.passphrase`), `rejects` (stock age refuses
   it), `n/a` (no package to try).
 - Every key inside `inputs` and `files` is optional; a vector carries only what it needs.
-  `inputs.k_release` stands in for the service in timed-release vectors. `files` values are
-  file names inside the vector's directory.
+  `files` values are file names inside the vector's directory.
+- Timed-release vectors carry `inputs.k_release`, and their headers name the service
+  `memory://spec.vectors`. Conformance harnesses MUST take `K_release` from the vector and
+  MUST NOT contact any network. (`memory://` passes §7.1 only in test builds.)
+- Passphrases are recorded in `inputs.passphrase`; for sealed vectors they are the words the
+  encoder generated.
 - `expected` describes a successful open; it is omitted or partial for failure vectors.
 - `comment` names the section of this document the vector exercises, e.g. `§4.1 step 6`.
 
-The secrets in the vectors (one X25519 identity, the passphrase `spec vector passphrase`, one
-`K_release` and unlock token, one signer key pair, one service key pair) are test material
-only.
+All secrets in the vectors (identity, passphrases, `K_release`, signer and service key pairs)
+are test material only.
 
 Running them against the reference, and regenerating them (maintainers only):
 
 ```
-cargo test -p sealdrop-core --test format_vectors
-cargo test -p sealdrop-core --features test-support -- --ignored regenerate_format_vectors
+cargo test -p sealdrop-core --features test-support --test format_vectors
+cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors
 ```
 
 ## Appendix A. Rules and their implementation
@@ -838,6 +898,10 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 
 | Rule | File | Function or item |
 |---|---|---|
+| §1 interop with age | core `crypt.rs`; core `tests/cctv.rs`, `tests/interop_age.rs` | `encrypt_writer`, `decrypt_reader`; C2SP CCTV vectors and Go age round trips |
+| §2.1 encodings | core `release.rs`, `argon2id.rs`, `hashing.rs`, `pack.rs` | `BASE64_STANDARD_NO_PAD`; `sha256_hex`; `write_plan` (timestamp format); `validate_release_id` |
+| §2.2 JSON | core `pack.rs`, `manifest.rs`, `release.rs` | serde derives on `Meta`, `Manifest`, `Receipt`, `InnerStanzas` |
+| §2.3 error classes | age 0.12 `protocol.rs`; core `error.rs` | `Decryptor::obtain_payload_key` (`find_map`), `age::DecryptError`; `Error` |
 | §3.1 tar encoding, modes, long names | core `pack.rs`; tar crate 0.4 | `write_plan` (`tar::Header::new_ustar`); `Builder::append_data` → `prepare_header_path` |
 | §3.2 entry order | core `pack.rs` | `plan` (`WalkDir::sort_by_file_name`), `write_plan` |
 | §3.3 `meta.json` schema | core `pack.rs` | `Meta`, `FileEntry`, `META_FORMAT`, `META_PATH` |
@@ -869,8 +933,12 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | §7.5 sweep, retention | service `db.rs`, `main.rs` | `sweep_expired_unix`; `main` (60-second interval, `--retention-days`) |
 | §7.5 rate limiting | service `ratelimit.rs`, `routes.rs` | `Limiter::allow`; `rate_limit`, `client_ip` |
 | §7.6 health | service `routes.rs` | `healthz` |
+| §7.7 status codes | service `routes.rs`, `app.rs` | `deposit`, `unlock`, `receipt`, `rate_limit`; `build` (`DefaultBodyLimit`) |
 | §8.1 receipt format | core `release.rs` | `Receipt`, `SignedReceipt`, `sign_receipt` |
 | §8.2 receipt verification | core `release.rs`; CLI `receipt.rs` | `verify_receipt_for`, `verify_receipt`; `run` |
+| §9 security notes | core `extract.rs`, `open.rs`, `release.rs` | `extract` (case collisions), `open`, `HttpFetch::unlock` |
+| §10 identifiers | core `pack.rs`, `manifest.rs`, `argon2id.rs`, `release.rs`; service `app.rs` | `META_FORMAT`, `MANIFEST_FORMAT`, `TAG` (both), `build` |
+| §11 vectors | core `tests/format_vectors.rs`, `tests/format_vectors_gen.rs` | conformance test; `regenerate_format_vectors` |
 
 ## Appendix B. Differences from plain age
 
@@ -896,3 +964,13 @@ not from the manifest. Then check by hand that the printed trusted comment is
 `sealdrop manifest <package_id>`, that `ciphertext.file` is the package's name, and that
 `sha256sum report.sealdrop.age` and the file size match `ciphertext.sha256` and
 `ciphertext.size`.
+
+## Appendix C. Known deviations of the reference implementation (0.2.1)
+
+The MUSTs above stand. In these places sealdrop 0.2.1 does not yet meet them:
+
+| # | Rule | Deviation |
+|---|---|---|
+| a | §3.3 `meta.json` ≤ 1 MiB (encoder) | `pack` does not refuse a larger `meta.json`. A folder of roughly 7 000 or more files seals, then fails to open with "meta.json too large". A fix is scheduled. |
+| b | §4.2 encoding step 2 (inner set obeys age's label rules) | `release::Recipient::wrap_file_key` discards the inner recipients' label sets. `seal` only ever combines one passphrase recipient, or only public-key recipients, so its own packages comply; a direct caller of the library could mix them. |
+| c | §6 limits (encoder side) | The encoder does not check the entry count, total size or per-file size against §6, so it can produce a package that conforming decoders refuse. |
