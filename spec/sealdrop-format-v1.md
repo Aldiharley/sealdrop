@@ -23,7 +23,8 @@ Goals:
    §6.
 2. Interoperability. A package whose age header contains only standard age stanzas MUST be
    decryptable by any age v1 implementation that supports the recipient types used, and the
-   decrypted container MUST be extractable by any ustar tar reader.
+   decrypted container MUST be extractable by any tar reader that supports ustar and GNU
+   long-name (`L`) entries (GNU tar, bsdtar and the common tar libraries do).
 3. Proof of what was delivered: a signed manifest binds the ciphertext's SHA-256 and size.
 4. Optional timed release: a key-release service hands out the wrapping key (`K_release`, §4.2)
    only during a window that starts at the first unlock. The window controls the release of
@@ -92,6 +93,9 @@ stanza the identity does not recognise is skipped. The vectors rely on this.
 Vector `expect` values (§11) map as follows: `header failure` = header error or excessive-work
 error; `verify failure` = verification failure; `extract failure` = extraction failure;
 `receipt failure` = verification failure in §8.2; `success` and `receipt ok` = no error.
+No v1 vector exercises decryption failure, no matching keys or release error, so none of
+these three classes has an `expect` value; `header failure` covers header and excessive-work
+errors only.
 
 ## 3. Plaintext container
 
@@ -106,8 +110,11 @@ The plaintext is a tar archive (the *container*). It is encrypted as described i
   before the entry. The reference does exactly this; decoders MUST accept both forms.
   Encoders MUST NOT write PAX headers (`x`, `g`).
 - Regular files have type `0` and mode `0644`. Directories have type `5` and mode `0755`.
-  Directory names MUST NOT end with `/`; the reference decoder rejects such a name as a bad
-  path (§3.4, empty component).
+  Directory names MUST NOT end with `/`, and decoders MUST reject an entry whose name ends in
+  `/` (§3.4: its last component is empty). Common tar libraries (Go `archive/tar`, Python
+  `tarfile`) and tools (GNU tar, bsdtar) append `/` to directory names; an encoder built on
+  one of them MUST strip it, or omit the directory entries of non-empty directories (decoders
+  treat directory entries as optional, §6.2 step 5.7).
 - uid and gid are 0 and owner names are empty; mtime is the time of sealing. Decoders MUST NOT
   apply modes, owners or times from the archive (the reference creates files with the
   platform's default permissions).
@@ -290,13 +297,13 @@ Decoding, in this order:
 7. Derive `key` as above and decrypt the body. If decryption fails (for example, a wrong
    passphrase), or the plaintext is not 16 bytes, the stanza fails with a decryption failure.
 
-The reference parser also accepts a leading `+` and leading zeros in step 4. Encoders MUST
-NOT write them.
+The reference parser also accepts a leading `+` and leading zeros in step 4 (Appendix C,
+row b). Encoders MUST NOT write them.
 
 Stand-alone rule: the stanza MUST be the only real stanza in the header. The reference
 declares the age label set `{"sealdrop-argon2id"}`, which makes age refuse to combine it with
 any other recipient. The reference decoder does not itself reject extra real stanzas next to a
-`sealdrop-argon2id` stanza. The manifest records it as kind `argon2id` (§5.2).
+`sealdrop-argon2id` stanza (Appendix C, row c). The manifest records it as kind `argon2id` (§5.2).
 
 ### 4.2 `sealdrop-release` (timed release)
 
@@ -347,13 +354,15 @@ Encoding:
 Stand-alone rule: the stanza MUST be the only real stanza in the header (label set
 `{"sealdrop-release"}`). Inner stanzas MUST NOT appear in the header in the clear. The sender's
 own key is NOT added to a timed package unless the sender lists it explicitly. The reference
-decoder does not itself reject extra real stanzas next to a `sealdrop-release` stanza.
+decoder does not itself reject extra real stanzas next to a `sealdrop-release` stanza
+(Appendix C, row c).
 
 Decoding, in this order:
 
-1. If the decoder verified the manifest (§5.4): the header MUST contain a `sealdrop-release`
-   stanza only if the manifest has a `release` object, and the stanza's `release_id` and
-   decoded `service` MUST equal `release.release_id` and `release.service`. Otherwise refuse.
+1. If the decoder verified the manifest (§5.4) and the header contains a `sealdrop-release`
+   stanza, the manifest MUST have a `release` object, and the stanza's `release_id` and
+   decoded `service` MUST equal `release.release_id` and `release.service`; otherwise refuse.
+   A `release` object without a stanza is not an error in the reference.
 2. If the package's inner key is a passphrase (the manifest's `recipients[0].kind` is `scrypt`
    or `argon2id`), the passphrase MUST be obtained before any request. Decoders MUST NOT start
    the window by fetching first and asking afterwards.
@@ -405,7 +414,7 @@ Pretty JSON, at most 1 MiB. Readers MUST ignore unknown fields.
 | `ciphertext.sha256` | string | yes | SHA-256 of the package file's bytes. |
 | `plaintext_tar_sha256` | string | yes | SHA-256 of the container (§3) before encryption. |
 | `recipients` | array | yes | One entry per real recipient (see below). |
-| `recipients[].kind` | string | yes | `x25519`, `hybrid-pq`, `plugin:<name>`, `scrypt` or `argon2id`. |
+| `recipients[].kind` | string | yes | `x25519`, `hybrid-pq`, `plugin:<name>`, `scrypt` or `argon2id`. Encoders MUST write one of these. Readers MUST accept any other string (a later compatible kind, §10) and treat it as an unknown public-key recipient. `hybrid-pq` means the `mlkem768p256tag` type of §4 only. |
 | `recipients[].fingerprint` | string | yes | First 16 hex characters of the SHA-256 of the recipient string's UTF-8 bytes, where the string is the canonical form re-rendered after parsing (plugin recipients keep the case they were given in); the empty string for `scrypt` and `argon2id`. |
 | `signer` | string | yes | The signer's minisign public key (56 characters). Not trusted by itself (§5.4). |
 | `classification` | string | no | Free text chosen by the sender. |
@@ -550,8 +559,9 @@ stream and:
 The size field is parsed as the tar crate does: GNU base-256 if the high bit of its first byte
 is set (the last 8 bytes, big-endian), otherwise octal digits up to the first NUL, with
 surrounding white space removed (Rust `str::trim`). A size field that does not parse is an
-error. Payloads are padded to 512 bytes. These rules make the guard's view of entry boundaries
-match the parser's: no entry's effective size can differ from its header size.
+error. Payloads are padded to 512 bytes. These rules are meant to make the guard's view of
+entry boundaries match the parser's, so that no entry's effective size differs from its header
+size; §6.2 step 5.5 checks it.
 
 A PAX `x` header without `size=` is accepted and applied by the tar parser; in particular a
 `path=` record is honoured, and the resulting path then goes through §3.4. Encoders still MUST
@@ -589,7 +599,8 @@ Any rejection aborts extraction. Nothing is moved into place, and the temporary 
 removed.
 
 A file entry that appears twice is not rejected by the reference; each occurrence is verified
-against `meta.json` in turn and the last one is kept. Encoders MUST NOT write duplicates (§3.5).
+against `meta.json` in turn and the last one is kept (Appendix C, row d). Encoders MUST NOT write
+duplicates (§3.5).
 
 ### 6.3 Placing the result
 
@@ -850,6 +861,8 @@ The version anchors are:
 
 - An incompatible change requires a new identifier (for example `sealdrop/2`).
 - Adding optional JSON fields is a compatible change. Readers MUST ignore unknown JSON fields.
+- Adding a manifest recipient `kind` (§5.2), for example one for age's native
+  `mlkem768x25519` type, is a compatible change.
 - Unknown stanza tags are ignored by age semantics: an identity skips stanzas it does not
   recognise, and decryption fails only if no stanza matches.
 
@@ -1000,3 +1013,6 @@ lacked the encoder checks of §3.3 and §6; the format itself is unchanged.)
 | # | Rule | Deviation |
 |---|---|---|
 | a | §4.2 encoding step 2 (inner set obeys age's label rules) | `release::Recipient::wrap_file_key` discards the inner recipients' label sets. `seal` only ever combines one passphrase recipient, or only public-key recipients, so its own packages comply; a direct caller of the library could mix them. |
+| b | §4.1 decoding step 4 (`t`, `m_kib`, `p` are plain decimal integers) | The parser also accepts a leading `+` and leading zeros. The reference encoder never writes them. |
+| c | §4.1 and §4.2 stand-alone rules (decoder side) | The decoder does not reject a header that has other real stanzas next to a `sealdrop-argon2id` or `sealdrop-release` stanza; only the encoder enforces the rule (through age's label sets). |
+| d | §3.5 every listed file written exactly once (decoder side) | The decoder does not reject a file entry that appears twice: each occurrence is verified against `meta.json` in turn and the last one is kept (§6.2). |
