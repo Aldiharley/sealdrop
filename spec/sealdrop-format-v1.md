@@ -1,6 +1,6 @@
 # sealdrop package format v1
 
-- **Status:** Stable — matches sealdrop 0.2.1
+- **Status:** Stable — matches sealdrop 0.2.2
 - **Licence:** CC0 1.0 Universal (see [`LICENSE`](LICENSE)). The reference implementation's code is Apache-2.0.
 - **Reference implementation:** https://github.com/Aldiharley/sealdrop
 
@@ -11,7 +11,7 @@ anything. Two optional age stanzas are defined: `sealdrop-argon2id` (Argon2id pa
 `sealdrop-release` (timed release, where a key-release service hands out a second key only
 during a window that starts at the first unlock). This document also defines the HTTP protocol
 of that service and the signed receipts it issues. It describes the format as implemented by
-sealdrop 0.2.1; where the reference implementation falls short of a MUST, Appendix C says so.
+sealdrop 0.2.2; where the reference implementation falls short of a MUST, Appendix C says so.
 Appendix A names the code for each rule.
 
 ## 1. Scope and goals
@@ -972,9 +972,10 @@ not from the manifest. Then check by hand that the printed trusted comment is
 `sha256sum report.sealdrop.age` and the file size match `ciphertext.sha256` and
 `ciphertext.size`.
 
-## Appendix C. Known deviations of the reference implementation (0.2.1)
+## Appendix C. Known deviations of the reference implementation (0.2.2)
 
-The MUSTs above stand. In these places sealdrop 0.2.1 does not yet meet them:
+The MUSTs above stand. In these places sealdrop 0.2.2 does not yet meet them. (sealdrop 0.2.1
+lacked the encoder checks of §3.3 and §6; the format itself is unchanged.)
 
 | # | Rule | Deviation |
 |---|---|---|
