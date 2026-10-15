@@ -28,6 +28,9 @@ export function mapSealError(msg: string, pluginNames: string[] = []): { text: s
   if (/hardware-only recipients need/i.test(m)) {
     return { text: "Hardware keys alone can't be recovered. Add a second recipient or accept the warning.", field: undefined };
   }
+  if (/cannot be mixed with classical/i.test(m)) {
+    return { text: "Post-quantum and classical recipients can't share one package. Remove one group, or seal twice.", field: undefined };
+  }
   if (/policy refused:/i.test(m)) {
     const reason = m.replace(/^.*policy refused:\s*/i, "");
     return { text: `sealdrop refused to seal this: ${trimStop(reason)}.`, field: undefined };

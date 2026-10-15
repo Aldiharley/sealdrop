@@ -3,7 +3,7 @@
 // about 300 ms with plausible data. State (identity, trusted signers, settings) lives in memory.
 //
 // Query switches (mock mode only):
-//   ?pkg=timed|pass|plain|untrusted|tampered   which package the "Choose package" buttons return
+//   ?pkg=timed|pass|plain|pq|untrusted|tampered which package the "Choose package" buttons return
 //   ?identity=none                             start without an identity
 
 import type * as T from "./types";
@@ -15,13 +15,18 @@ const BOB = "RWQa91Zc7pK2dQ8mWn4VtXrYj0uHsLbE3oFiCgA5Nx6yTzMq1RkPwDvS";
 const CAROL = "RWQm3Ht8vWz0LxK5nBq2Ye7JdPcRu9AsFg4iTo1NhXb6ZkCyQlMrVwE2";
 const SERVICE_KEY = "RWQs7eRvIcE3Kp0TnLq8YaWdB5ZhUxJm2GfOo9CtNr4VkDyXiSwQlHbM";
 const SERVICE = "https://release.example.org";
+const X25519_RECIPIENT = "age1qx7k4m9v2c8l5n3z6p0t7y4h2j8d5s9w3e6r1u4a7g0f2b8x5m3q9c6k4v7w2f3k2";
+/** A post-quantum recipient string is about 2 000 characters long. */
+const PQ_RECIPIENT = "age1pq1" + "q".repeat(1990);
 
+const hasIdentity = q.get("identity") !== "none";
 const state = {
   identity: {
-    exists: q.get("identity") !== "none",
-    recipient: "age1qx7k4m9v2c8l5n3z6p0t7y4h2j8d5s9w3e6r1u4a7g0f2b8x5m3q9c6k4v7w2f3k2" as string | null,
+    exists: hasIdentity,
+    recipient: X25519_RECIPIENT as string | null,
     signer: ALICE as string | null,
     dir: "C:\\Users\\me\\.sealdrop",
+    kind: hasIdentity ? "x25519" : null,
   } as T.IdentityInfo,
   trusted: [
     { name: "alice", key: ALICE },
@@ -58,6 +63,8 @@ function pkgName(): string {
       return "payroll-pass.sealdrop.age";
     case "plain":
       return "q3-findings.sealdrop.age";
+    case "pq":
+      return "q3-findings-pq.sealdrop.age";
     case "untrusted":
       return "q3-findings-untrusted.sealdrop.age";
     case "tampered":
@@ -121,6 +128,12 @@ function isTimedPath(p: string) {
 function isPassPath(p: string) {
   return p.includes("pass");
 }
+function isPqPath(p: string) {
+  return p.includes("-pq.");
+}
+function isPqRecipient(s: string) {
+  return s.startsWith("age1pq1") || s.startsWith("age1tagpq1");
+}
 function pkgSigner(p: string) {
   return p.includes("untrusted") ? CAROL : ALICE;
 }
@@ -133,11 +146,13 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
       return { ...state.identity };
 
     case "generate_identity": {
+      const pq = args.pq === true;
       state.identity = {
         exists: true,
-        recipient: "age1qx7k4m9v2c8l5n3z6p0t7y4h2j8d5s9w3e6r1u4a7g0f2b8x5m3q9c6k4v7w2f3k2",
+        recipient: pq ? PQ_RECIPIENT : X25519_RECIPIENT,
         signer: ALICE,
         dir: state.identity.dir,
+        kind: pq ? "pq" : "x25519",
       };
       return { ...state.identity };
     }
@@ -146,6 +161,7 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
       const s = String(args.s ?? "").trim();
       if (!/^age1[a-z0-9]{16,}$/.test(s)) throw `invalid recipient \`${s}\``;
       const fingerprint = hash16(s);
+      if (s.startsWith("age1pq1")) return { kind: "pq", fingerprint, plugin: null, allowed: true };
       if (s.startsWith("age1tagpq1")) return { kind: "hybrid-pq", fingerprint, plugin: null, allowed: true };
       const m = /^age1([a-z]+)1/.exec(s);
       if (m && m[1] !== "qx" && m[1] !== "q" && m[1].length > 2) {
@@ -160,6 +176,19 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
       if (!req.passphrase && req.recipients.length === 0) throw "policy refused: no recipients given";
       if (req.passphrase && req.recipients.length > 0)
         throw "policy refused: a passphrase cannot be combined with other recipients";
+      const pqCount = req.recipients.filter(isPqRecipient).length;
+      if (pqCount > 0 && pqCount < req.recipients.length)
+        throw "policy refused: post-quantum recipients cannot be mixed with classical ones (classical: 0123456789abcdef); seal them separately";
+      const allPq = !req.passphrase && pqCount === req.recipients.length;
+      // Same rule as the core: self joins plain recipient packages only, and never mixes kinds.
+      let selfOmitted: string | null = null;
+      if (req.include_self && !req.passphrase && !req.expire_after_secs && req.recipients.length > 0) {
+        const mePq = state.identity.kind === "pq";
+        if (allPq !== mePq)
+          selfOmitted = allPq
+            ? "your own identity is classical (x25519), so it was not added to this post-quantum package; create a post-quantum identity with `keygen --pq` to include yourself"
+            : "your own identity is post-quantum, so it was not added to this classical package; the recipients would otherwise be mixed";
+      }
       if (req.expire_after_secs && !state.settings.release_service)
         throw "Set the release service URL in Settings first";
       emit("packing", req.input);
@@ -183,6 +212,8 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
         passphrase: req.passphrase ? WORDS.join(" ") : null,
         entropy_bits: req.passphrase ? 77.5 : null,
         release: req.expire_after_secs ? { service: SERVICE, window_secs: req.expire_after_secs } : null,
+        self_omitted: selfOmitted,
+        post_quantum: allPq,
       };
       return out;
     }
@@ -216,16 +247,20 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
         expires: "2026-12-31",
         recipients: isPassPath(path)
           ? [{ kind: "scrypt", fingerprint: "" }]
-          : [{ kind: "x25519", fingerprint: "a41c0e9b72d3f685" }],
+          : isPqPath(path)
+            ? [{ kind: "pq", fingerprint: "5be07d21c94a3f86" }]
+            : [{ kind: "x25519", fingerprint: "a41c0e9b72d3f685" }],
         release: isTimedPath(path) ? { service: SERVICE, window_secs: 600 } : null,
         ciphertext_sha256: SHA,
+        post_quantum: isPqPath(path),
       };
       if (signerArg) {
         if (signerArg !== signer) throw `verification failed: manifest signer ${signer} does not match --signer`;
         return base;
       }
       const t = state.trusted.find((x) => x.key === signer);
-      if (!t) return { ...base, ok: false, untrusted_signer: signer, classification: null, expires: null };
+      if (!t)
+        return { ...base, ok: false, untrusted_signer: signer, classification: null, expires: null, post_quantum: null };
       return { ...base, trusted_as: t.name };
     }
 
@@ -255,6 +290,7 @@ export async function mock(cmd: string, args: Record<string, unknown> = {}): Pro
         first_unlock: timed ? iso(-19) : null,
         expires_at: timed ? iso(581) : null,
         remaining_secs: timed ? 581 : null,
+        post_quantum: req.skip_verify ? null : isPqPath(req.package),
       };
       return out;
     }

@@ -321,6 +321,7 @@ function ResultBody({ pkg, checking, outcome }: { pkg: { path: string; name: str
         <KV k="Classification">{v.classification || "None"}</KV>
         {v.expires ? <KV k="Advisory date">{v.expires} (not enforced)</KV> : <KV k="Advisory date">None</KV>}
         <KV k="Recipients">{recipientsText(v.recipients, timed)}</KV>
+        {v.post_quantum !== null ? <KV k="Post-quantum">{v.post_quantum ? "yes" : "no"}</KV> : null}
         {v.ciphertext_sha256 ? (
           <KV k="SHA-256">
             <span className="cluster" style={{ gap: 12 }}>

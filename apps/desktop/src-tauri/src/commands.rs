@@ -237,6 +237,8 @@ pub struct IdentityInfo {
     pub recipient: Option<String>,
     pub signer: Option<String>,
     pub dir: String,
+    /// `"x25519"` or `"pq"`; `None` when there is no identity yet.
+    pub kind: Option<String>,
 }
 
 fn identity_info(ks: &KeyStore) -> IdentityInfo {
@@ -245,6 +247,7 @@ fn identity_info(ks: &KeyStore) -> IdentityInfo {
         recipient: ks.recipient_string().ok(),
         signer: ks.signing_public_string().ok(),
         dir: ks.dir().display().to_string(),
+        kind: ks.identity_kind().ok().map(|k| k.as_str().to_string()),
     }
 }
 
@@ -254,10 +257,15 @@ pub fn get_identity() -> CmdResult<IdentityInfo> {
 }
 
 #[tauri::command]
-pub fn generate_identity(force: bool) -> CmdResult<IdentityInfo> {
+pub fn generate_identity(force: bool, pq: bool) -> CmdResult<IdentityInfo> {
+    use sealdrop_core::keys::IdentityKind;
     let ks = store();
-    ks.generate(force, sealdrop_core::keys::IdentityKind::X25519)
-        .map_err(ce)?;
+    let kind = if pq {
+        IdentityKind::Pq
+    } else {
+        IdentityKind::X25519
+    };
+    ks.generate(force, kind).map_err(ce)?;
     Ok(identity_info(&ks))
 }
 
@@ -365,6 +373,10 @@ pub struct SealOut {
     pub passphrase: Option<String>,
     pub entropy_bits: Option<f64>,
     pub release: Option<ReleaseOut>,
+    /// Why the sender's own identity was left out of the package, if it was.
+    pub self_omitted: Option<String>,
+    /// True when every recipient of the package is a post-quantum kind.
+    pub post_quantum: bool,
 }
 
 fn seal_impl(ks: &KeyStore, req: SealArgs, progress: &dyn Progress) -> CmdResult<SealOut> {
@@ -469,7 +481,9 @@ fn seal_impl(ks: &KeyStore, req: SealArgs, progress: &dyn Progress) -> CmdResult
         bytes: res.pack.total_bytes,
         passphrase: res.passphrase.as_ref().map(|p| p.joined().to_string()),
         entropy_bits: res.passphrase.as_ref().map(|p| p.entropy_bits),
+        post_quantum: sealdrop_core::open::post_quantum_kinds(&res.manifest_doc.recipients),
         release: res.manifest_doc.release.map(release_out),
+        self_omitted: res.self_omitted,
     })
 }
 
@@ -545,6 +559,8 @@ pub struct VerifyOut {
     pub recipients: Option<Vec<RecipientOut>>,
     pub release: Option<ReleaseOut>,
     pub ciphertext_sha256: Option<String>,
+    /// Every signed recipient is post-quantum; `None` when the package was not verified.
+    pub post_quantum: Option<bool>,
 }
 
 fn verify_impl(ks: &KeyStore, path: &Path, signer: Option<&str>) -> CmdResult<VerifyOut> {
@@ -571,6 +587,7 @@ fn verify_impl(ks: &KeyStore, path: &Path, signer: Option<&str>) -> CmdResult<Ve
                 ),
                 release: m.release.map(release_out),
                 ciphertext_sha256: Some(m.ciphertext.sha256),
+                post_quantum: Some(v.post_quantum),
             })
         }
         Err(Error::Verify(msg)) if is_untrusted_msg(&msg) => {
@@ -628,6 +645,8 @@ pub struct OpenOut {
     pub first_unlock: Option<String>,
     pub expires_at: Option<String>,
     pub remaining_secs: Option<i64>,
+    /// Every signed recipient is post-quantum; `None` when verification was skipped.
+    pub post_quantum: Option<bool>,
 }
 
 fn open_impl(
@@ -708,6 +727,7 @@ fn open_impl(
         bytes: rep.extract.bytes,
         signer: rep.verify.as_ref().map(|v| v.signer.clone()),
         verified: rep.verify.is_some(),
+        post_quantum: rep.verify.as_ref().map(|v| v.post_quantum),
         trusted_as: rep.verify.and_then(|v| v.trusted_as),
         first_unlock: rep.release.as_ref().map(|u| u.first_unlock.clone()),
         expires_at: rep.release.map(|u| u.expires_at),
@@ -980,6 +1000,33 @@ mod tests {
     }
 
     #[test]
+    fn recipient_check_maps_pq_kind() {
+        let s = sealdrop_core::pq::Identity::generate()
+            .to_public()
+            .to_string();
+        let c = recipient_check(&s).unwrap();
+        assert_eq!(c.kind, "pq");
+        assert_eq!(c.plugin, None);
+        assert!(c.allowed);
+    }
+
+    #[test]
+    fn generate_identity_kinds_and_pq_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let ks = KeyStore::open(dir.path());
+        ks.generate(false, sealdrop_core::keys::IdentityKind::Pq)
+            .unwrap();
+        let info = identity_info(&ks);
+        assert_eq!(info.kind.as_deref(), Some("pq"));
+        assert!(info.recipient.unwrap().starts_with("age1pq1"));
+
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(identity_info(&KeyStore::open(empty.path())).kind, None);
+        let x = fast_store(&empty.path().join("x"));
+        assert_eq!(identity_info(&x).kind.as_deref(), Some("x25519"));
+    }
+
+    #[test]
     fn recipient_check_maps_kind_plugin_and_allowed() {
         let id = age::x25519::Identity::generate().to_public().to_string();
         let c = recipient_check(&id).unwrap();
@@ -1097,6 +1144,8 @@ mod tests {
         assert_eq!(sealed.files, 1);
         assert_eq!(sealed.bytes, 5);
         assert!(sealed.release.is_none());
+        assert!(!sealed.post_quantum);
+        assert_eq!(sealed.self_omitted, None);
         let pass = sealed.passphrase.clone().expect("passphrase mode");
         assert!(sealed.entropy_bits.unwrap() > 70.0);
 
@@ -1108,6 +1157,7 @@ mod tests {
             Some(sender.signing_public_string().unwrap().as_str())
         );
         assert_eq!(v.package_id, None);
+        assert_eq!(v.post_quantum, None);
 
         // Passing the expected key verifies without trusting.
         let key = sender.signing_public_string().unwrap();
@@ -1126,6 +1176,7 @@ mod tests {
             Some(sealed.ciphertext_sha256.as_str())
         );
         assert_eq!(v.recipients.as_ref().unwrap().len(), 1);
+        assert_eq!(v.post_quantum, Some(false));
 
         // Open to a chosen folder.
         let dest = d.path().join("dest");
@@ -1140,6 +1191,7 @@ mod tests {
         assert_eq!(rep.trusted_as.as_deref(), Some("alice"));
         assert_eq!(rep.files, 1);
         assert_eq!(rep.remaining_secs, None);
+        assert_eq!(rep.post_quantum, Some(false));
         assert_eq!(
             std::fs::read(Path::new(&rep.root).join("a.txt")).unwrap(),
             b"hello"
@@ -1163,6 +1215,7 @@ mod tests {
         let rep = open_impl(&sender, args, Box::new(MemoryFetch::expired()), &NoProgress).unwrap();
         assert!(!rep.verified);
         assert_eq!(rep.signer, None);
+        assert_eq!(rep.post_quantum, None);
         assert!(Path::new(&rep.root).starts_with(&root));
         assert_eq!(
             std::fs::read(Path::new(&rep.root).join("a.txt")).unwrap(),
@@ -1171,6 +1224,46 @@ mod tests {
         remove_view_dir();
         assert!(view_root().is_none());
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn pq_package_reports_post_quantum_and_self_omitted() {
+        let d = tempfile::tempdir().unwrap();
+        let input = d.path().join("report");
+        std::fs::create_dir_all(&input).unwrap();
+        std::fs::write(input.join("a.txt"), b"hello").unwrap();
+
+        // A post-quantum sender sealing to itself: every recipient is post-quantum.
+        let pq = KeyStore::open(d.path().join("pq"));
+        pq.generate(false, sealdrop_core::keys::IdentityKind::Pq)
+            .unwrap();
+        let mut args = seal_args(&input, &d.path().join("out-pq"));
+        args.passphrase = false;
+        args.recipients = vec![pq.recipient_string().unwrap()];
+        let sealed = seal_impl(&pq, args, &NoProgress).unwrap();
+        assert!(sealed.post_quantum);
+        assert_eq!(sealed.self_omitted, None);
+
+        let key = pq.signing_public_string().unwrap();
+        let v = verify_impl(&pq, Path::new(&sealed.package), Some(&key)).unwrap();
+        assert!(v.ok);
+        assert_eq!(v.post_quantum, Some(true));
+        assert_eq!(v.recipients.as_ref().unwrap()[0].kind, "pq");
+
+        let mut oargs = open_args(&sealed.package, Some(&d.path().join("dest")), false, None);
+        oargs.signer = Some(key);
+        let rep = open_impl(&pq, oargs, Box::new(MemoryFetch::expired()), &NoProgress).unwrap();
+        assert!(rep.verified);
+        assert_eq!(rep.post_quantum, Some(true));
+
+        // A classical sender sealing to a post-quantum recipient is left out, with a note.
+        let classical = fast_store(&d.path().join("classical"));
+        let mut args = seal_args(&input, &d.path().join("out-mixed"));
+        args.passphrase = false;
+        args.recipients = vec![pq.recipient_string().unwrap()];
+        let sealed = seal_impl(&classical, args, &NoProgress).unwrap();
+        assert!(sealed.post_quantum);
+        assert!(sealed.self_omitted.unwrap().contains("classical"));
     }
 
     #[test]

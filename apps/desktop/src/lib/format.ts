@@ -173,7 +173,7 @@ export function parseIsoDate(s: string): Date | null {
 
 export function kindLabel(kind: string): string {
   if (kind === "x25519") return "x25519";
-  if (kind === "hybrid-pq") return "post-quantum";
+  if (kind === "pq" || kind === "hybrid-pq") return "post-quantum";
   if (kind.startsWith("plugin:")) return "plugin";
   if (kind === "scrypt") return "passphrase (scrypt)";
   if (kind === "argon2id") return "passphrase (Argon2id)";

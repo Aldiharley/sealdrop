@@ -61,7 +61,7 @@ export default function App() {
     api
       .getIdentity()
       .then(setIdentity)
-      .catch(() => setIdentity({ exists: false, recipient: null, signer: null, dir: "" }));
+      .catch(() => setIdentity({ exists: false, recipient: null, signer: null, dir: "", kind: null }));
     void refreshSettings();
   }, [refreshSettings]);
 

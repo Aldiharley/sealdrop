@@ -6,10 +6,12 @@ export interface IdentityInfo {
   recipient: string | null;
   signer: string | null;
   dir: string;
+  /** "x25519" or "pq"; null when there is no identity yet. */
+  kind: "x25519" | "pq" | null;
 }
 
 export interface RecipientCheck {
-  /** "x25519", "hybrid-pq" or "plugin:<name>" */
+  /** "x25519", "pq", "hybrid-pq" or "plugin:<name>" */
   kind: string;
   fingerprint: string;
   plugin: string | null;
@@ -49,6 +51,10 @@ export interface SealOut {
   passphrase: string | null;
   entropy_bits: number | null;
   release: ReleaseOut | null;
+  /** Why the sender's own identity was left out of the package, if it was. */
+  self_omitted: string | null;
+  /** True when every recipient of the package is a post-quantum kind. */
+  post_quantum: boolean;
 }
 
 export interface ProbeOut {
@@ -78,6 +84,8 @@ export interface VerifyOut {
   recipients: RecipientOut[] | null;
   release: ReleaseOut | null;
   ciphertext_sha256: string | null;
+  /** Every signed recipient is post-quantum; null when the package was not verified. */
+  post_quantum: boolean | null;
 }
 
 export interface OpenArgs {
@@ -101,6 +109,8 @@ export interface OpenOut {
   expires_at: string | null;
   /** Service-clock sample taken when the response was produced. */
   remaining_secs: number | null;
+  /** Every signed recipient is post-quantum; null when verification was skipped. */
+  post_quantum: boolean | null;
 }
 
 export interface Trusted {

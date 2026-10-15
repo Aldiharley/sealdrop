@@ -378,6 +378,7 @@ export default function Open({ active }: { active: boolean }) {
                   <h3 ref={headingRef} tabIndex={-1} className="lead no-ring">
                     Opened.
                   </h3>
+                  {o.post_quantum ? <Badge tone="info">Post-quantum</Badge> : null}
                 </div>
                 <div>
                   {o.files} {plural(o.files, "file")} restored to <span className="mono">{rootDir}</span>.
@@ -601,6 +602,7 @@ export default function Open({ active }: { active: boolean }) {
                   </KV>
                   <KV k="Sealed">{formatDate(v.created)}</KV>
                   <KV k="Recipients">{recipientsText(v.recipients, v.release !== null)}</KV>
+                  {v.post_quantum !== null ? <KV k="Post-quantum">{v.post_quantum ? "yes" : "no"}</KV> : null}
                   <KV k="Opens with">{opensWith}</KV>
                 </div>
               ) : (
