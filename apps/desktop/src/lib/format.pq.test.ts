@@ -2,9 +2,12 @@
 // this file with rolldown first, since Node 20 does not strip TypeScript types).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { defaultPqForReplace, kindLabel, recipientTone, recipientsText } from "./format";
 import { mapSealError, selfOmittedText } from "./errors";
 import { mock } from "./mock";
+import { VERSION } from "./version";
 import type * as T from "./types";
 
 const PQ = "age1pq1" + "q".repeat(1990);
@@ -128,5 +131,13 @@ describe("mock backend", () => {
     assert.equal((await open({})).post_quantum, true);
     assert.equal((await open({ skip_verify: true })).post_quantum, null);
     assert.equal((await open({ package: "C:/s/q3-findings.sealdrop.age" })).post_quantum, false);
+  });
+});
+
+describe("app version", () => {
+  it("VERSION matches package.json", () => {
+    // `npm test` runs from apps/desktop, so package.json is in the working directory.
+    const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
+    assert.equal(VERSION, pkg.version);
   });
 });

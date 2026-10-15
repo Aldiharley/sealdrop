@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText } from "../lib/api";
 import { useApp } from "../lib/app";
 import { hostOf } from "../lib/format";
+import { VERSION } from "../lib/version";
 import type { Settings as SettingsT } from "../lib/types";
 import { Chip } from "../components/Chip";
 import { Field } from "../components/Field";
@@ -265,7 +266,7 @@ export default function Settings({ active }: { active: boolean }) {
 
           <Tile title="About">
             <div className="stack stack--sm">
-              <div style={{ fontWeight: 700 }}>sealdrop 0.2.0</div>
+              <div style={{ fontWeight: 700 }}>sealdrop {VERSION}</div>
               <p style={{ margin: 0 }}>
                 Packages made for recipients or with a standard passphrase open in stock age tools. Argon2id and timed release packages need sealdrop.
               </p>

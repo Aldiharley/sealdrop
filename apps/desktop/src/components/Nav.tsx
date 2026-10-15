@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ScreenId } from "../lib/types";
+import { VERSION } from "../lib/version";
 import { Brand, NavKeys, NavOpen, NavSeal, NavSettings, NavVerify } from "./icons";
 
 const TOP: { id: ScreenId; label: string; icon: ReactNode }[] = [
@@ -37,7 +38,7 @@ export function Nav({ current, onSelect }: { current: ScreenId; onSelect: (s: Sc
       <div className="neu-nav__spacer" />
       {item(BOTTOM)}
       <div className="muted" style={{ fontSize: 12, marginTop: 4 }} aria-hidden="true">
-        sealdrop 0.2
+        sealdrop {VERSION}
       </div>
     </nav>
   );

@@ -17,8 +17,8 @@ Everything below comes from commands run on branch `feat/0.3-pq-commitment` for 
 | Interop (`--test interop_age`) | 5 passed, 0 failed (4 run the Go CLI, 1 uses the age crate for scrypt) |
 | Spec vectors (`--test format_vectors`) | 3 passed: 20 vectors `ok`, 12 `stock_age` claims checked against Go age |
 | `cargo deny check licenses advisories` | `advisories ok, licenses ok` (one warning: unused license allowance) |
-| `npm test` (apps/desktop) | 10 tests, 4 suites, 10 pass, 0 fail |
-| `npm run build` (apps/desktop) | pass (`tsc --noEmit && vite build`, `built in 388ms`) |
+| `npm test` (apps/desktop) | 11 tests, 5 suites, 11 pass, 0 fail |
+| `npm run build` (apps/desktop) | pass (`tsc --noEmit && vite build`, `built in 235ms`) |
 | Manual PQ session (CLI) | seal to `age1pq1…` from a classical store, `verify` shows `post-quantum: yes`, `open` with the PQ store restores the files, Go `age -d` lists the same package; mixing is refused with exit 3 |
 
 ## Tests per crate
@@ -173,9 +173,9 @@ $ cd apps/desktop && npm test
     # Subtest: verify and open expose post_quantum
     ok 5 - verify and open expose post_quantum
 ...
-# tests 10
-# suites 4
-# pass 10
+# tests 11
+# suites 5
+# pass 11
 # fail 0
 # cancelled 0
 # skipped 0
@@ -186,7 +186,7 @@ $ cd apps/desktop && npm run build
 dist/assets/mock-ZSo4xQWK.js                                  8.20 kB │ gzip:   3.48 kB
 dist/assets/webview-BjKnOuh1.js                              16.34 kB │ gzip:   3.51 kB
 dist/assets/index-DHVYEJIU.js                               341.12 kB │ gzip: 106.49 kB
-✓ built in 388ms
+✓ built in 235ms
 ```
 
 `npm test` bundles `src/lib/format.pq.test.ts` with rolldown and runs it on Node's built-in test runner (Node 20.18.0). `npm run build` is `tsc --noEmit && vite build`. The `rolldown` native binding workaround from 0.2 was already in `node_modules`, and `package.json` and the lockfile were not changed by running these (the version lines were edited by hand). The Rust side of the desktop app (19 unit tests, clippy) is in the tables above.
@@ -208,7 +208,7 @@ Every random source in `crates/sealdrop-core/src` and `crates/sealdrop-release/s
 | `passphrase::generate`, `crates/sealdrop-core/src/passphrase.rs:61` | `rand::rng()` with `random_range` | the generated EFF / BIP-39 words | panics (same `ThreadRng`) |
 | `seal.rs:324` | `uuid::Uuid::new_v4` | the package id | panics (same `uuid` code) |
 | `extract.rs:492` | `uuid::Uuid::new_v4` | a suffix for the `.old` backup folder name (not secret) | panics (same `uuid` code) |
-| `KeyStore::generate`, `crates/sealdrop-core/src/keys.rs:218` | `minisign::KeyPair::generate_unencrypted_keypair` (getrandom, `minisign-0.10.0/src/keypair.rs:31,34`) | the minisign signing key | returns `Err`, which `keys.rs:218-219` maps to `Error::KeyStore` and the caller reports; nothing is written after it |
+| `KeyStore::generate`, `crates/sealdrop-core/src/keys.rs:218` | `minisign::KeyPair::generate_unencrypted_keypair` (getrandom, `minisign-0.10.0/src/keypair.rs:31,34`) | the minisign signing key | returns `Err`, which `keys.rs:218-219` maps to `Error::KeyStore` and the caller reports; nothing is written after it. `identity.txt` has already been written by then, so a failure leaves a partial key store (pre-existing behaviour, not changed here) |
 | `sealdrop-release keygen`, `crates/sealdrop-release/src/main.rs:92` | the same minisign call | the service signing key | returns `Err`, propagated with `?`, so the command exits non-zero before writing a key file |
 | `Db::create_token`, `crates/sealdrop-release/src/db.rs:55` | `rand::RngCore::fill_bytes(&mut rand::rng(), ...)` | the deposit token | panics (same `ThreadRng`) |
 
@@ -320,7 +320,7 @@ These were validated for 0.2 and are recorded in `docs/VALIDATION.md` at tag v0.
 
 - **Hidden passphrase prompt not exercised at a terminal.** `open` hides what you type when stdin is a terminal (`rpassword`, `crates/sealdrop-cli/src/commands/open.rs:176-181`) and reads one visible line otherwise (`open.rs:182`). The automated tests and this session use the non-terminal path; typing a passphrase at a real console was not tested.
 - **Timed-release packages do not open in stock age.** By design; stock age reports "no identity matched any of the recipients" (recorded in the 0.2 evidence).
-- **Case-insensitive destinations.** The refusal on open depends on probing the destination folder (`destination_is_case_insensitive`, `crates/sealdrop-core/src/extract.rs:374`). It is covered by unit tests; it was not run on a macOS volume.
+- **Case-insensitive destinations.** The refusal on open depends on probing the destination folder (`destination_is_case_insensitive`, `crates/sealdrop-core/src/extract.rs:304`). It is covered by unit tests; it was not run on a macOS volume.
 - **`age1tagpq1…` is encrypt-only.** There is no identity type for it, so sealdrop cannot open such packages.
 - **Node 20 workaround.** Node here is 20.18.0, below the 20.19 that Vite asks for. The build and `npm test` ran despite the warning.
 - **`cargo deny` warning.** The allow list has an unused entry (`Apache-2.0 WITH LLVM-exception`). The check still reports `advisories ok, licenses ok`.
