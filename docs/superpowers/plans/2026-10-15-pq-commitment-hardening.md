@@ -1623,10 +1623,16 @@ git commit -m "feat(core): manifest key_commitment, checked before any plaintext
     }
 
     #[test]
-    fn probe_reports_the_platform() {
+    fn probe_reports_the_platform_and_cleans_up() {
         let d = tempfile::tempdir().unwrap();
         let ci = destination_is_case_insensitive(d.path());
-        assert_eq!(ci, cfg!(any(windows, target_os = "macos")) || ci);
+        // Windows temp folders are case-insensitive; Linux CI runners are case-sensitive.
+        if cfg!(windows) {
+            assert!(ci);
+        }
+        if cfg!(target_os = "linux") {
+            assert!(!ci);
+        }
         // Probe files are cleaned up.
         assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0);
     }
