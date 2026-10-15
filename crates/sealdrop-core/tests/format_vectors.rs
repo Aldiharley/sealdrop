@@ -13,7 +13,7 @@ use age::secrecy::SecretString;
 use base64::prelude::{Engine, BASE64_STANDARD_NO_PAD};
 use sealdrop_core::extract::{extract, ExtractError, Limits};
 use sealdrop_core::keys::KeyStore;
-use sealdrop_core::open::{open, OpenRequest};
+use sealdrop_core::open::{open, verify, OpenRequest};
 use sealdrop_core::progress::NoProgress;
 use sealdrop_core::release::{
     self, verify_receipt_for, MemoryFetch, ReleaseFetch, SignedReceipt, Unlock,
@@ -59,12 +59,26 @@ impl ReleaseFetch for VectorFetch {
 }
 
 /// A scratch key store holding the vectors' test identity; the committed copy is never written.
+/// A post-quantum `inputs.identity` replaces the store's X25519 line (a store holds exactly
+/// one native identity).
 fn store_for(v: &Value, tmp: &Path) -> KeyStore {
     let src = vectors().join("keys/store");
     let dst = tmp.join("store");
     fs::create_dir_all(&dst).unwrap();
     for f in ["identity.txt", "sign.key", "sign.pub"] {
         fs::copy(src.join(f), dst.join(f)).unwrap();
+    }
+    if let Some(i) = v["inputs"]["identity"].as_str() {
+        if i.starts_with("AGE-SECRET-KEY-PQ-1") {
+            fs::write(
+                dst.join("identity.txt"),
+                format!(
+                    "{i}
+"
+                ),
+            )
+            .unwrap();
+        }
     }
     let ks = KeyStore::open(&dst);
     if let Some(k) = v["inputs"]["signer_key"].as_str() {
@@ -101,7 +115,11 @@ fn fetch_for(v: &Value) -> Result<Box<dyn ReleaseFetch>, String> {
 fn decrypted_tar_sha256(package: &Path, v: &Value) -> Result<String, String> {
     let mut inner: Vec<Box<dyn age::Identity>> = Vec::new();
     if let Some(i) = v["inputs"]["identity"].as_str() {
-        inner.push(Box::new(age::x25519::Identity::from_str(i)?));
+        if i.starts_with("AGE-SECRET-KEY-PQ-1") {
+            inner.push(Box::new(sealdrop_core::pq::Identity::from_str(i)?));
+        } else {
+            inner.push(Box::new(age::x25519::Identity::from_str(i)?));
+        }
     }
     if let Some(p) = v["inputs"]["passphrase"].as_str() {
         let pass = SecretString::from(p.to_string());
@@ -194,6 +212,16 @@ fn run_open(dir: &Path, v: &Value, expect: &str) -> Result<(), String> {
             }
             Ok(())
         }
+        // Section 5.4 step 7: the commitment vector verifies (steps 1 to 6) and fails only
+        // when `open` checks the unwrapped file key.
+        ("verify failure", Err(Error::Verify(m))) if v["name"] == "commitment-mismatch" => {
+            if !m.contains("key commitment") {
+                return Err(format!("expected a key commitment failure, got {m:?}"));
+            }
+            verify(&ks, &work.join(pkg_name), None)
+                .map(|_| ())
+                .map_err(|e| format!("verify alone must pass for this vector, got {e:?}"))
+        }
         ("verify failure", Err(Error::Verify(_))) => Ok(()),
         // Section 2.3: `header failure` is a header error or an excessive-work error only.
         (
@@ -275,7 +303,7 @@ fn run(dir: &Path) -> Result<(), String> {
 #[test]
 fn all_format_vectors() {
     let dirs = vector_dirs();
-    assert_eq!(dirs.len(), 18, "expected 18 vectors, found {}", dirs.len());
+    assert_eq!(dirs.len(), 20, "expected 20 vectors, found {}", dirs.len());
     let mut failures = Vec::new();
     for d in &dirs {
         let name = d.file_name().unwrap().to_string_lossy().into_owned();
@@ -294,26 +322,50 @@ fn all_format_vectors() {
     );
 }
 
-fn age_available() -> bool {
-    Command::new("age")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// The installed `age` version as (major, minor, patch), from `age --version` (`v1.3.2`);
+/// `None` when the binary is missing.
+fn age_version() -> Option<(u64, u64, u64)> {
+    let out = Command::new("age").arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Unparseable output (a development build) counts as new enough.
+    Some(parse_version(text.trim()).unwrap_or((u64::MAX, 0, 0)))
+}
+
+/// Parses `v1.3.2` or `1.3.0` (any suffix after the patch number is ignored).
+fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let s = s.strip_prefix('v').unwrap_or(s);
+    let mut it = s.splitn(3, '.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next()?.parse().ok()?;
+    let patch = it.next()?;
+    let digits: String = patch.chars().take_while(char::is_ascii_digit).collect();
+    Some((major, minor, digits.parse().ok()?))
+}
+
+#[test]
+fn version_parsing() {
+    assert_eq!(parse_version("v1.3.2"), Some((1, 3, 2)));
+    assert_eq!(parse_version("1.3.0"), Some((1, 3, 0)));
+    assert_eq!(parse_version("v1.2.1-rc.1"), Some((1, 2, 1)));
+    assert_eq!(parse_version("(devel)"), None);
+    assert!(parse_version("v1.2.1") < parse_version("1.3.0"));
 }
 
 /// With the Go `age` binary present, proves the `stock_age` claim of every package vector.
 #[test]
 fn stock_age_claims() {
-    if !age_available() {
+    let Some(have) = age_version() else {
         assert!(
             std::env::var("SEALDROP_REQUIRE_AGE").as_deref() != Ok("1"),
             "SEALDROP_REQUIRE_AGE=1 but the `age` binary is not installed"
         );
         eprintln!("skipping: age not installed");
         return;
-    }
-    let ident = vectors().join("keys/store/identity.txt");
+    };
+    let tmp = tempfile::tempdir().unwrap();
     let mut checked = 0;
     for d in vector_dirs() {
         let v = load(&d);
@@ -325,6 +377,29 @@ fn stock_age_claims() {
         if claim == "n/a" || claim == "opens-interactive" {
             continue;
         }
+        if let Some(min) = v["min_age"].as_str() {
+            let want = parse_version(min).unwrap_or_else(|| panic!("{name}: bad min_age {min:?}"));
+            if have < want {
+                eprintln!("skip  {name}: needs age >= {min}, found {have:?}");
+                continue;
+            }
+        }
+        // The vector's own identity (X25519 or post-quantum), else the store's.
+        let ident = match v["inputs"]["identity"].as_str() {
+            Some(i) => {
+                let p = tmp.path().join(format!("{name}.key"));
+                fs::write(
+                    &p,
+                    format!(
+                        "{i}
+"
+                    ),
+                )
+                .unwrap();
+                p
+            }
+            None => vectors().join("keys/store/identity.txt"),
+        };
         let out = Command::new("age")
             .args(["-d", "-i"])
             .arg(&ident)

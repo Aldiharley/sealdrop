@@ -1,14 +1,15 @@
 {
   "format": "sealdrop-manifest/1",
-  "package_id": "4717f355-e61a-4ab2-828b-295f7ce460f2",
+  "package_id": "11bb8284-290c-4cd4-9718-c8eec02fa317",
   "tool": "sealdrop 0.2.2",
-  "created": "2026-10-14T13:28:43Z",
+  "created": "2026-10-15T14:04:54Z",
   "ciphertext": {
     "file": "report.sealdrop.age",
-    "size": 5657,
-    "sha256": "9feefc9adfe68da51df0a72385be871ce307df1c656482fbfa8b8d7bc3db1da4"
+    "size": 5721,
+    "sha256": "7a1852e6aa98130c4e854d0798a124af927206adb25043c32f863d1f1c8f17e6"
   },
-  "plaintext_tar_sha256": "60f4bf0b419f08ec215859ae1fb60fde0341b66f29bda6bbb93daa3e2ac6aba1",
+  "plaintext_tar_sha256": "3847faa374bb2dccca600c04f103df3b26cff6f0d1ddc554a7a532a2e5c2f21e",
+  "key_commitment": "fea5467e7fd7cd6ee50dc6c9683fc0f2c5bcecb0481e8db565dc0545a089868c",
   "recipients": [
     {
       "kind": "x25519",
@@ -19,7 +20,7 @@
   "classification": "spec-vector",
   "release": {
     "service": "https://release.invalid",
-    "release_id": "bbb19e41-40a7-489d-9880-84b75ccaa453",
+    "release_id": "65d1f17e-4f0a-43f8-9042-3caf9d333653",
     "window_secs": 600,
     "service_key": "RWQfgHiVfhzK5Q6PKw1I1GIPAA87WKMT4qyYcmwm39QJwyyfejHO1V8F"
   },

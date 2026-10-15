@@ -1,0 +1,32 @@
+{
+  "comment": "§4 pq recipient (mlkem768x25519); stock age ≥ 1.3 opens it",
+  "expect": "success",
+  "expected": {
+    "files": [
+      {
+        "path": "report/a.txt",
+        "sha256": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+        "size": 6
+      },
+      {
+        "path": "report/sub/b.bin",
+        "sha256": "40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880",
+        "size": 256
+      }
+    ],
+    "package_id": "cf0d4dc1-a3de-4485-9d76-837fbd8b9a01",
+    "plaintext_tar_sha256": "2e1ebfb571fa1b24aaecde65d85d301aeb1d554f4110ccbe3e398ac32df90338"
+  },
+  "files": {
+    "manifest": "report.manifest.json",
+    "package": "report.sealdrop.age",
+    "signature": "report.manifest.json.minisig"
+  },
+  "inputs": {
+    "identity": "AGE-SECRET-KEY-PQ-1YGZ0FUU3F6GKSMFPPZLQZZH5C3LJPKNGL7AGYK0YCCERZSER9XXSXMHV5S",
+    "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
+  },
+  "min_age": "1.3.0",
+  "name": "recipient-pq",
+  "stock_age": "opens"
+}

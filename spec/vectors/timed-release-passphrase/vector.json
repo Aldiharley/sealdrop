@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "3c8b53da-26da-4ec4-94ff-d2b3b4fee52f",
-    "plaintext_tar_sha256": "989bede9b4dc32a78bfea71d354a37e6211a038038161e822b33204d8d24b27c"
+    "package_id": "7f83dcbd-26ea-4ac4-82c5-2b23271625ca",
+    "plaintext_tar_sha256": "3847faa374bb2dccca600c04f103df3b26cff6f0d1ddc554a7a532a2e5c2f21e"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,8 +23,8 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "k_release": "l+kOgHfJMexpiQSler6tgoGrPCHO4GyvHnJIe1Ysdqo",
-    "passphrase": "myspace preoccupy estimate desecrate prodigal veneering",
+    "k_release": "CTvu9IiGVhDZigerLHSldH+hfQ4Jv0LHimTPA2Mzncw",
+    "passphrase": "custodian laziness abridge cruncher drivable earplugs",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "timed-release-passphrase",

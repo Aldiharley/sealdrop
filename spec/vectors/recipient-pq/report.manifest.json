@@ -1,0 +1,22 @@
+{
+  "format": "sealdrop-manifest/1",
+  "package_id": "cf0d4dc1-a3de-4485-9d76-837fbd8b9a01",
+  "tool": "sealdrop 0.2.2",
+  "created": "2026-10-15T14:04:45Z",
+  "ciphertext": {
+    "file": "report.sealdrop.age",
+    "size": 6930,
+    "sha256": "01bc1430edc0c471f8158e6719733eb0c4610dd86ac5960fb800928f091f1a7e"
+  },
+  "plaintext_tar_sha256": "2e1ebfb571fa1b24aaecde65d85d301aeb1d554f4110ccbe3e398ac32df90338",
+  "key_commitment": "7679228945e99f78ee1b502beabb4ad1dbe83d1c7c85e36294ad12f1d7cc29e3",
+  "recipients": [
+    {
+      "kind": "pq",
+      "fingerprint": "3bc88103729e4c78"
+    }
+  ],
+  "signer": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW",
+  "classification": "spec-vector",
+  "notes": "expires is advisory and is not enforced by any software; release.window_secs is enforced by the named service for the encrypted package only"
+}

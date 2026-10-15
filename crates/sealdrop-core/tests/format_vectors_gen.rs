@@ -1,7 +1,7 @@
 //! Regenerates `spec/vectors/`. Run with:
 //!   SEALDROP_VECTORS_FORCE=1 cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors
 //! Existing vector directories are kept unless SEALDROP_VECTORS_FORCE=1. The committed keys
-//! under `spec/vectors/keys/` are always reused.
+//! under `spec/vectors/keys/` are always reused (each is generated once, when missing).
 //!
 //! Needs `test-support` for the deposit intercept: the timed-release vectors are sealed
 //! against the production-valid `https://release.invalid` (RFC 6761: never resolves) with
@@ -11,6 +11,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use age::secrecy::SecretString;
 use base64::prelude::{Engine, BASE64_STANDARD_NO_PAD};
@@ -38,7 +39,47 @@ fn fixture(dir: &Path) -> PathBuf {
     p
 }
 
-fn keys() -> (KeyStore, minisign::KeyPair) {
+/// Writes a secret test key file with mode 0600 on Unix (the layout of the store's
+/// `identity.txt`).
+fn write_secret(path: &Path, contents: &str) {
+    fs::write(path, contents).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
+/// The committed post-quantum test identity `keys/pq-identity.txt`, generated once.
+fn pq_identity(k: &Path) -> sealdrop_core::pq::Identity {
+    let path = k.join("pq-identity.txt");
+    if !path.exists() {
+        let id = sealdrop_core::pq::Identity::generate();
+        let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+        write_secret(
+            &path,
+            &format!(
+                "# created: {created}
+# public key: {}
+{id}
+",
+                id.to_public()
+            ),
+        );
+    }
+    sealdrop_core::pq::Identity::from_str(&pq_identity_line()).unwrap()
+}
+
+/// The `AGE-SECRET-KEY-PQ-1…` line of `keys/pq-identity.txt`.
+fn pq_identity_line() -> String {
+    let t = fs::read_to_string(root().join("keys/pq-identity.txt")).unwrap();
+    t.lines()
+        .find(|l| l.starts_with("AGE-SECRET-KEY-PQ-1"))
+        .unwrap()
+        .to_string()
+}
+
+fn keys() -> (KeyStore, minisign::KeyPair, sealdrop_core::pq::Identity) {
     let k = root().join("keys");
     fs::create_dir_all(&k).unwrap();
     let ks = KeyStore::open(k.join("store"));
@@ -68,7 +109,8 @@ fn keys() -> (KeyStore, minisign::KeyPair) {
             .unwrap()
             .into_public_key()
             .unwrap();
-    (ks, minisign::KeyPair { pk, sk })
+    let pq = pq_identity(&k);
+    (ks, minisign::KeyPair { pk, sk }, pq)
 }
 
 fn want(name: &str) -> Option<PathBuf> {
@@ -147,7 +189,7 @@ fn identity_line(ks: &KeyStore) -> String {
 #[test]
 #[ignore]
 fn regenerate_format_vectors() {
-    let (ks, service) = keys();
+    let (ks, service, pq_identity) = keys();
     let me = sealdrop_core::crypt::Recipient::parse(&ks.recipient_string().unwrap()).unwrap();
     let signer = ks.signing_public_string().unwrap();
     let bundle_files = json!({
@@ -167,6 +209,20 @@ fn regenerate_format_vectors() {
                 "comment": "§4 X25519 recipient; decryptable by stock age with -i keys/store/identity.txt"}),
             );
         }
+    }
+    if let Some(d) = want("recipient-pq") {
+        let pq =
+            sealdrop_core::crypt::Recipient::parse(&pq_identity.to_public().to_string()).unwrap();
+        assert_eq!(pq.kind(), "pq");
+        let (_, expected) = seal_into(&ks, &d, Mode::Recipients(vec![pq]), false, None);
+        write_json(
+            &d,
+            json!({"name": "recipient-pq", "expect": "success", "stock_age": "opens",
+            "min_age": "1.3.0",
+            "inputs": {"identity": pq_identity_line(), "signer_key": signer},
+            "expected": expected, "files": bundle_files,
+            "comment": "§4 pq recipient (mlkem768x25519); stock age ≥ 1.3 opens it"}),
+        );
     }
     if let Some(d) = want("passphrase-scrypt") {
         let (res, expected) = seal_into(
@@ -350,6 +406,39 @@ fn regenerate_format_vectors() {
                 "expected": expected, "files": bundle_files, "comment": why}),
             );
         }
+    }
+    // A manifest whose key commitment does not match the file key, re-signed correctly:
+    // verification (section 5.4 steps 1 to 6) passes, opening fails at step 7.
+    if let Some(d) = want("commitment-mismatch") {
+        let (res, expected) = seal_into(&ks, &d, Mode::Recipients(vec![me.clone()]), false, None);
+        let real = res.manifest_doc.key_commitment.clone().unwrap();
+        let orig = fs::read_to_string(d.join(MAN)).unwrap();
+        let needle = format!("\"key_commitment\": \"{real}\"");
+        assert_eq!(orig.matches(&needle).count(), 1, "key_commitment not found");
+        let m = orig.replace(
+            &needle,
+            &format!("\"key_commitment\": \"{}\"", "0".repeat(64)),
+        );
+        fs::write(d.join(MAN), &m).unwrap();
+        let sig = minisign::sign(
+            Some(&ks.signing_public().unwrap()),
+            &ks.signing_key().unwrap(),
+            std::io::Cursor::new(m.as_bytes()),
+            Some(&format!(
+                "sealdrop manifest {}",
+                res.manifest_doc.package_id
+            )),
+            None,
+        )
+        .unwrap();
+        fs::write(d.join(SIG), sig.into_string()).unwrap();
+        write_json(
+            &d,
+            json!({"name": "commitment-mismatch", "expect": "verify failure", "stock_age": "opens",
+            "inputs": {"identity": identity_line(&ks), "signer_key": signer},
+            "expected": expected, "files": bundle_files,
+            "comment": "§5.4 step 7: signature valid, ciphertext hash valid, key_commitment does not match the file key"}),
+        );
     }
     // Raw tar rejects (the extractor must refuse before writing any file).
     tar_reject_vectors();

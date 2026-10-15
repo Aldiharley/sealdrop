@@ -1,18 +1,19 @@
 # sealdrop package format v1
 
-- **Status:** Stable — matches sealdrop 0.2.2
+- **Status:** Stable — matches sealdrop 0.3.0
 - **Licence:** CC0 1.0 Universal (see [`LICENSE`](LICENSE)). The reference implementation's code is Apache-2.0.
 - **Reference implementation:** https://github.com/Aldiharley/sealdrop
 
 **Abstract.** A sealdrop package is a tar archive with a fixed layout, encrypted as one age v1
 file, and delivered next to a JSON manifest signed with minisign. The manifest records the
 SHA-256 of the exact ciphertext, so a recipient can check what was delivered before decrypting
-anything. Two optional age stanzas are defined: `sealdrop-argon2id` (Argon2id passphrases) and
-`sealdrop-release` (timed release, where a key-release service hands out a second key only
-during a window that starts at the first unlock). This document also defines the HTTP protocol
-of that service and the signed receipts it issues. It describes the format as implemented by
-sealdrop 0.2.2; where the reference implementation falls short of a MUST, Appendix C says so.
-Appendix A names the code for each rule.
+anything, and a commitment to the age file key, so a verified package has exactly one file key
+that opens it. Two optional age stanzas are defined: `sealdrop-argon2id` (Argon2id
+passphrases) and `sealdrop-release` (timed release, where a key-release service hands out a
+second key only during a window that starts at the first unlock). This document also defines
+the HTTP protocol of that service and the signed receipts it issues. It describes the format as
+implemented by sealdrop 0.3.0; where the reference implementation falls short of a MUST,
+Appendix C says so. Appendix A names the code for each rule.
 
 ## 1. Scope and goals
 
@@ -33,7 +34,9 @@ Goals:
 Non-goals:
 
 - No DRM, screenshot or forwarding prevention. Timed release limits when the *encrypted package* can be opened; it cannot recall decrypted content.
-- No new ciphers. Every primitive is age's, minisign's, SHA-256, Argon2id or ChaCha20-Poly1305.
+- No new ciphers. Every primitive is age's, minisign's, SHA-256, HKDF-SHA-256, Argon2id or
+  ChaCha20-Poly1305; post-quantum key wrapping is ML-KEM-768 and X25519 through age's own hybrid
+  recipient type.
 - Nothing below the age layer. The age file format itself is unchanged.
 
 Out of scope: command-line flags, user interfaces, local key storage, deposit-token issuance.
@@ -228,14 +231,17 @@ Standard recipient types an encoder MAY use:
 | Manifest `kind` (§5.2) | Recipient string | age stanza tag |
 |---|---|---|
 | `x25519` | `age1…` | `X25519` |
-| `hybrid-pq` | `age1tagpq1…` (age's hybrid ML-KEM-768 + P-256 *tagged* type, as implemented by the Rust `age` crate 0.12) | `mlkem768p256tag` |
+| `pq` | `age1pq1…` (age's native hybrid ML-KEM-768 + X25519 type, age ≥ 1.3; C2SP age.md "mlkem768x25519") | `mlkem768x25519` |
+| `hybrid-pq` | `age1tagpq1…` (age's hybrid ML-KEM-768 + P-256 *tagged* type) | `mlkem768p256tag` |
 | `plugin:<name>` | `age1<name>1…` | defined by the plugin |
 | `scrypt` | passphrase | `scrypt` |
 
-Note: `age1pq1…` is a different type: age's native ML-KEM-768 + X25519 recipient (stanza
-`mlkem768x25519`, age v1.3). The reference does not support it; its parser treats such a string
-as a recipient for a plugin named `pq`. Encoders MUST NOT record such a recipient as
-`hybrid-pq`.
+`pq` and `hybrid-pq` are the **post-quantum kinds**. An encoder MUST NOT combine a
+post-quantum kind with any other public-key kind in one header: a classical stanza next to a
+post-quantum one hands the file key to whoever can break the classical stanza later. A decoder
+MUST still open such a header (age semantics; CCTV `hybrid_and_x25519`), and MUST report the
+package as not post-quantum. A package is *post-quantum* when every real recipient is of a
+post-quantum kind (for a timed package, every inner recipient recorded in the manifest).
 
 The reference's age library (Rust `age` 0.12) appends one random `*-grease` stanza to every
 header that has no `scrypt` stanza. Where this document says a stanza MUST "stand alone", grease
@@ -413,8 +419,9 @@ Pretty JSON, at most 1 MiB. Readers MUST ignore unknown fields.
 | `ciphertext.size` | integer | yes | Package size in bytes. |
 | `ciphertext.sha256` | string | yes | SHA-256 of the package file's bytes. |
 | `plaintext_tar_sha256` | string | yes | SHA-256 of the container (§3) before encryption. |
+| `key_commitment` | string | no (MUST be written by encoders from 0.3.0) | Lowercase hex of HKDF-SHA-256(ikm = the 16-byte age file key, salt = empty, info = `sealdrop/commit/v1`, length 32). Derived from the random file key only, never from a passphrase. |
 | `recipients` | array | yes | One entry per real recipient (see below). |
-| `recipients[].kind` | string | yes | `x25519`, `hybrid-pq`, `plugin:<name>`, `scrypt` or `argon2id`. Encoders MUST write one of these. Readers MUST accept any other string (a later compatible kind, §10) and treat it as an unknown public-key recipient. `hybrid-pq` means the `mlkem768p256tag` type of §4 only. |
+| `recipients[].kind` | string | yes | `x25519`, `pq`, `hybrid-pq`, `plugin:<name>`, `scrypt` or `argon2id`. Encoders MUST write one of these. Readers MUST accept any other string (a later compatible kind, §10) and treat it as an unknown public-key recipient. `pq` means the `mlkem768x25519` type of §4 and `hybrid-pq` the `mlkem768p256tag` type, nothing else. |
 | `recipients[].fingerprint` | string | yes | First 16 hex characters of the SHA-256 of the recipient string's UTF-8 bytes, where the string is the canonical form re-rendered after parsing (plugin recipients keep the case they were given in); the empty string for `scrypt` and `argon2id`. |
 | `signer` | string | yes | The signer's minisign public key (56 characters). Not trusted by itself (§5.4). |
 | `classification` | string | no | Free text chosen by the sender. |
@@ -429,7 +436,8 @@ Pretty JSON, at most 1 MiB. Readers MUST ignore unknown fields.
 Optional fields are omitted when absent (never `null`). For a timed package, `recipients`
 describes the inner recipients. A passphrase package has exactly one entry. In a recipient
 package, the reference lists the given recipients in order, de-duplicated, and then the
-sender's own recipient if it was added (it is never added to passphrase or timed packages).
+sender's own recipient if it was added (it is never added to passphrase or timed packages, nor
+when its kind would mix post-quantum and classical recipients, §4).
 
 `notes` is exactly:
 
@@ -465,7 +473,9 @@ Real example (recipient package):
 ```
 
 The recipient here is `age145ngzusvw3tyuumz6nvt3wxjnauzuhlllkdpnvhpw63fcqnsr5dqyjcmrp`;
-SHA-256 of that string begins `e8f174dbb97b1119`. A timed package of the same folder carries,
+SHA-256 of that string begins `e8f174dbb97b1119`. This example was written by 0.2.1 and so has
+no `key_commitment`; a 0.3.0 manifest carries it between `plaintext_tar_sha256` and
+`recipients` (the vectors of §11 show it). A timed package of the same folder carries,
 between `signer` and `notes`:
 
 ```json
@@ -497,9 +507,9 @@ trusted comment: sealdrop manifest a160500c-d16c-4855-be1c-0242df964ea0
 
 ### 5.4 Verification algorithm
 
-A decoder MUST run these steps, in this order, before decrypting anything, before contacting
-any release service, and before touching any key material. Any failure stops the process with
-a verification error.
+A decoder MUST run steps 1 to 6, in this order, before decrypting anything, before contacting
+any release service, and before touching any key material, and step 7 during decryption. Any
+failure stops the process with a verification error.
 
 1. Read `<name>.manifest.json` and `<name>.manifest.json.minisig` (§5.1). Reject a manifest
    larger than 1 MiB. Parse it as JSON; `format` MUST equal `sealdrop-manifest/1`.
@@ -517,6 +527,10 @@ a verification error.
    file. The reference hashes the open handle in one pass and decrypts it in a second pass.
    This defeats a swap of the path, but not an in-place rewrite of the file between the two
    passes. Implementations SHOULD hash while decrypting, or decrypt from a private copy.
+7. After decryption has unwrapped the file key and before any payload is decrypted: if
+   `key_commitment` is present, derive it from the unwrapped file key and compare in constant
+   time. A mismatch is a verification failure; no plaintext may be written. When the field is
+   absent, or verification was skipped (§5.5), there is nothing to check.
 
 Decoders MAY also compare the SHA-256 of the decrypted container with `plaintext_tar_sha256`;
 the reference does not.
@@ -573,7 +587,8 @@ NOT write PAX headers (§3.1).
    reject. Reject it if its header size or its content exceeds 1 MiB.
 2. Parse `meta.json` (§3.3). `format` MUST be `sealdrop/1`. `root` MUST contain no `/` and
    MUST pass §3.4. Every `files[].path` MUST pass §3.4, including the first-component rule.
-   Reject duplicate paths in `files`.
+   Reject duplicate paths in `files`. On a case-insensitive destination, see §9 (case
+   collisions).
 3. If the target `<destination>/<root>` exists (any kind of entry, a dangling symbolic link
    included) and the user did not ask to overwrite, refuse before extracting any entry.
 4. Create a temporary directory inside the destination directory (the reference names it
@@ -817,7 +832,16 @@ integrity-only check if it labels the result as not pinned.
   2021), so a ciphertext alone does not pin down a single plaintext under every possible key.
   The signed manifest fixes the exact ciphertext bytes (SHA-256 and size) and the container's
   SHA-256. Sender and recipient can therefore show which ciphertext was delivered, and a
-  decoder that compares `plaintext_tar_sha256` can show which plaintext it obtained.
+  decoder that compares `plaintext_tar_sha256` can show which plaintext it obtained. From 0.3.0
+  the manifest also commits to the file key (`key_commitment`), so a verified package has
+  exactly one file key that opens it, closing the stanza-level non-commitment.
+- **Security level.** age's file key is 16 bytes, so every sealdrop package is 128-bit secure
+  against key search whichever 256-bit AEAD encrypts the bytes. This is the level of TLS 1.3,
+  Signal and WireGuard. Say "128-bit security level, 256-bit keys", not "256-bit encryption".
+- **Harvest now, decrypt later.** `x25519` and plugin stanzas can be opened retroactively by a
+  future quantum computer; `pq` and `hybrid-pq` stanzas cannot (unless the hybrid's both parts
+  fail). Packages that must stay confidential beyond about 2035 SHOULD be sealed to
+  post-quantum kinds only. Symmetric parts (ChaCha20-Poly1305, HKDF, SHA-256) need no change.
 - **The unlock token is visible.** It is in the header by design. Holding it lets anyone start
   the window (denial of the window), not read the content.
 - **What the service learns.** The release id, the package's SHA-256, the window, the deposit
@@ -835,11 +859,14 @@ integrity-only check if it labels the result as not pinned.
   that moving between common KDF settings changes attack cost by about 100 to 200 times, while
   six random words instead of a human password change it by about 2^40. Argon2id also costs
   interoperability: stock age cannot open such files. Encoders SHOULD default to scrypt.
-- **Case-insensitive file systems.** Two paths that differ only in case (`a.txt`, `A.txt`) pass
-  §3.4 but name the same file on such file systems. The reference then writes the second file
-  over the first: extraction succeeds and reports two files, but one file remains, under the
-  first name, with the second file's content. Decoders on case-insensitive file systems SHOULD
-  reject packages whose paths collide when compared case-insensitively.
+- **Case-insensitive file systems.** Two paths that differ only in case (`a.txt` and `A.txt`,
+  or the folders `sub` and `SUB`) pass §3.4 but name the same file on such file systems, where
+  the second would be written over the first. Decoders on case-insensitive file systems SHOULD
+  reject packages whose paths, directory prefixes included, collide when compared
+  case-insensitively, before writing anything. From 0.3.0 the reference does so: it probes
+  whether the destination folder is case-insensitive and then compares Unicode lowercase
+  foldings (Appendix C, row e). Its encoder refuses such inputs on every platform, so its own
+  packages never collide.
 - **Signer keys.** The manifest names its signer but does not authenticate it. Recipients
   SHOULD confirm a signer key out of band before trusting it.
 - **Unverified opening.** When verification is skipped (§5.5), header values reach the network
@@ -856,15 +883,26 @@ The version anchors are:
 | `sealdrop-manifest/1` | manifest `format` |
 | `sealdrop-argon2id` | age stanza tag |
 | `sealdrop-release` | age stanza tag |
+| `sealdrop/commit/v1` | HKDF info of the manifest's `key_commitment` |
 | `/v1/` | release service paths |
 | `sealdrop manifest <package_id>`, `sealdrop receipt <release_id>` | trusted comments |
 
 - An incompatible change requires a new identifier (for example `sealdrop/2`).
 - Adding optional JSON fields is a compatible change. Readers MUST ignore unknown JSON fields.
-- Adding a manifest recipient `kind` (§5.2), for example one for age's native
-  `mlkem768x25519` type, is a compatible change.
+- Adding a manifest recipient `kind` (§5.2) is a compatible change; `pq` (age's native
+  `mlkem768x25519` type) was added this way in 0.3.0, as was the optional `key_commitment`
+  field.
 - Unknown stanza tags are ignored by age semantics: an identity skips stanzas it does not
   recognise, and decryption fails only if no stanza matches.
+
+### 10.1 Reserved identifiers (roadmap)
+
+| Identifier | Reserved for | Status |
+|---|---|---|
+| `sealdrop-manifest/2` | A manifest signed by Ed25519 (minisign) **and** ML-DSA-65 together, both required to verify | Planned 2029–2031, gated on an independently audited Rust ML-DSA implementation |
+| `sealdrop-encryption.org/v2` (age-style first line) | A sealdrop payload format on Cobblestone-128 (key-committing chunked AES-128-GCM), one suite per version, dual-read forever | Not scheduled; only if a FIPS/AES or committing-payload requirement materialises |
+
+Readers of this version MUST reject these identifiers as unknown formats.
 
 ## 11. Test vectors
 
@@ -874,8 +912,8 @@ exactly this schema:
 
 ```json
 { "name": "recipient-x25519", "expect": "success",
-  "stock_age": "opens" | "opens-interactive" | "rejects" | "n/a",
-  "inputs": { "identity": "AGE-SECRET-KEY-1…", "passphrase": "…", "k_release": "<b64>", "signer_key": "RW…", "service_key": "RW…" },
+  "stock_age": "opens" | "opens-interactive" | "rejects" | "n/a", "min_age": "1.3.0",
+  "inputs": { "identity": "AGE-SECRET-KEY-1…" | "AGE-SECRET-KEY-PQ-1…", "passphrase": "…", "k_release": "<b64>", "signer_key": "RW…", "service_key": "RW…" },
   "expected": { "package_id": "…", "plaintext_tar_sha256": "<hex>", "files": [ { "path": "…", "size": 0, "sha256": "<hex>" } ],
                "release_id": "…", "package_sha256": "<hex>" },
   "files": { "package": "report.sealdrop.age", "manifest": "report.manifest.json", "signature": "report.manifest.json.minisig", "tar": "input.tar", "receipt": "receipt.json" },
@@ -889,7 +927,13 @@ exactly this schema:
   (stock age decrypts it after prompting for `inputs.passphrase`), `rejects` (stock age refuses
   it), `n/a` (no package to try). A vector has `n/a` if and only if it has no `files.package`.
   Stock age never reads the manifest, so it opens the package of a vector whose manifest is
-  wrong (`manifest-tampered`, `manifest-wrong-comment`).
+  wrong (`manifest-tampered`, `manifest-wrong-comment`, `commitment-mismatch`).
+- `min_age` (optional) is the oldest stock age release whose claim holds, for vectors whose
+  recipient type needs a recent age (`recipient-pq`: `1.3.0`). A harness whose `age` is older
+  skips that vector's `stock_age` claim and says so.
+- `commitment-mismatch` passes §5.4 steps 1 to 6 (valid signature, right trusted comment, right
+  ciphertext hash) and fails only at step 7, so a decoder that verifies without decrypting
+  accepts it; opening it MUST fail with a verification failure.
 - Every key inside `inputs` and `files` is optional; a vector carries only what it needs.
   `files` values are file names inside the vector's directory.
 - `inputs` and `expected` MAY be omitted when a vector needs none (the `tar-reject-*` vectors have
@@ -948,6 +992,8 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | §3.4 path rules | core `extract.rs` | `check_path`, `WINDOWS_RESERVED` |
 | §3.5 encoder checks | core `pack.rs` | `check_portable`, `utf8_name`, `plan`, `write_plan` |
 | §4 recipients, kinds, fingerprints | core `crypt.rs` | `Recipient::{parse, kind, fingerprint}`, `to_age_recipients` |
+| §4 `pq` recipients and identities | core `pq.rs` | `Recipient`, `Identity`, `is_pq_stanza_tag` |
+| §4 post-quantum kinds, mixing rule | core `policy.rs`; core `open.rs`; core `seal.rs` | `check_recipients`, `is_post_quantum_kind`; `post_quantum_kinds`; `seal` (self-omission) |
 | §4 armor, leading whitespace | core `crypt.rs` | `encrypt_writer`, `decrypt_reader`, `SkipLeadingWhitespace` |
 | §4 scrypt bounds | core `crypt.rs` | `scrypt_recipient`, `scrypt_identity`, `SCRYPT_MAX_DECRYPT_LOG_N` |
 | §4 header size | core `probe.rs` | `probe_bytes`, `HEADER_MAX` |
@@ -959,6 +1005,7 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | §5.2 manifest | core `manifest.rs`; core `seal.rs` | `Manifest`, `NOTES`, `MANIFEST_FORMAT`, `Manifest::from_json`; `seal` |
 | §5.3 signature | core `manifest.rs` | `sign`, `verify` |
 | §5.4 verification | core `open.rs` | `verify_with`, `resolve_signer` |
+| §5.2 `key_commitment`, §5.4 step 7 | core `crypt.rs`; core `open.rs`, `seal.rs` | `key_commitment`, `Committing`, `CommittedIdentity`, `parse_commitment`; `open`, `seal` |
 | §5.5 skip verification | core `open.rs`; CLI `open.rs` | `open` (`skip_verify`); `run` |
 | §6 limits | core `extract.rs`; core `pack.rs` | `Limits::default`, `META_MAX_BYTES`; `check_limits` (encoder side, also §3.3) |
 | §6.1 stream guard | core `extract.rs` | `GuardedReader::{read, on_header}`, `parse_size`, `check_pax` |
@@ -977,7 +1024,9 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | §8.1 receipt format | core `release.rs` | `Receipt`, `SignedReceipt`, `sign_receipt` |
 | §8.2 receipt verification | core `release.rs`; CLI `receipt.rs` | `verify_receipt_for`, `verify_receipt`; `run` |
 | §9 security notes | core `extract.rs`, `open.rs`, `release.rs` | `extract` (case collisions), `open`, `HttpFetch::unlock` |
-| §10 identifiers | core `pack.rs`, `manifest.rs`, `argon2id.rs`, `release.rs`; service `app.rs` | `META_FORMAT`, `MANIFEST_FORMAT`, `TAG` (both), `build` |
+| §9 case collisions | core `extract.rs`; core `pack.rs` | `case_collision`, `destination_is_case_insensitive`, `extract`; `plan` |
+| §10 identifiers | core `pack.rs`, `manifest.rs`, `argon2id.rs`, `release.rs`, `crypt.rs`; service `app.rs` | `META_FORMAT`, `MANIFEST_FORMAT`, `TAG` (both), `COMMIT_INFO`, `build` |
+| §10.1 reserved identifiers rejected | core `manifest.rs`; age 0.12 | `Manifest::from_json` (`MANIFEST_FORMAT`); age's header parser (unknown first line) |
 | §11 vectors | core `tests/format_vectors.rs`, `tests/format_vectors_gen.rs`; core `seal.rs` | conformance test (`VectorFetch`, `decrypted_tar_sha256`); `regenerate_format_vectors`; `test_support::intercept_deposits` |
 
 ## Appendix B. Differences from plain age
@@ -985,6 +1034,7 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | Package | Stock age (`age -d`) | Notes |
 |---|---|---|
 | X25519 recipients | `age -d -i key.txt pkg.sealdrop.age \| tar -x` works | Restores `sealdrop/meta.json` and `sealdrop/payload/…` without sealdrop's checks. |
+| `pq` recipients (`age1pq1…`) | `age -d -i key.txt pkg.sealdrop.age \| tar -x` works with age ≥ 1.3.0 | `key.txt` holds the `AGE-SECRET-KEY-PQ-1…` line; older age releases cannot read it. |
 | Armored | Same as binary | age detects armor itself. |
 | scrypt passphrase | Works after the passphrase prompt | |
 | `hybrid-pq` (`age1tagpq1…`) | Needs an age implementation with that identity type | The reference can encrypt to it but has no identity for it. |
@@ -1005,9 +1055,9 @@ not from the manifest. Then check by hand that the printed trusted comment is
 `sha256sum report.sealdrop.age` and the file size match `ciphertext.sha256` and
 `ciphertext.size`.
 
-## Appendix C. Known deviations of the reference implementation (0.2.2)
+## Appendix C. Known deviations of the reference implementation (0.3.0)
 
-The MUSTs above stand. In these places sealdrop 0.2.2 does not yet meet them. (sealdrop 0.2.1
+The MUSTs above stand. In these places sealdrop 0.3.0 does not yet meet them. (sealdrop 0.2.1
 lacked the encoder checks of §3.3 and §6; the format itself is unchanged.)
 
 | # | Rule | Deviation |
@@ -1016,3 +1066,4 @@ lacked the encoder checks of §3.3 and §6; the format itself is unchanged.)
 | b | §4.1 decoding step 4 (`t`, `m_kib`, `p` are plain decimal integers) | The parser also accepts a leading `+` and leading zeros. The reference encoder never writes them. |
 | c | §4.1 and §4.2 stand-alone rules (decoder side) | The decoder does not reject a header that has other real stanzas next to a `sealdrop-argon2id` or `sealdrop-release` stanza; only the encoder enforces the rule (through age's label sets). |
 | d | §3.5 every listed file written exactly once (decoder side) | The decoder does not reject a file entry that appears twice: each occurrence is verified against `meta.json` in turn and the last one is kept (§6.2). |
+| e | §9 case-insensitive file systems | Detection probes the destination folder; a destination on a different, case-insensitive volume than the probe cannot occur because the temp dir is created inside it, but network file systems may answer the probe inconsistently. |

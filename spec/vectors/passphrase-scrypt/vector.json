@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "6e168d90-9c5c-4974-a670-129835f4ecbd",
-    "plaintext_tar_sha256": "aeb310d19c80a850a462ba3a4121f6ef1997de92cab5ce39f9f66e0c493344b8"
+    "package_id": "37261c59-00ea-49ae-9847-92579cdb913e",
+    "plaintext_tar_sha256": "6086574f9cb6d4efbbd227b7ab1c4aa18215e0fc090e21ead7645699e41fb406"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,7 +23,7 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "passphrase": "headroom siding sitcom caviar earache livestock",
+    "passphrase": "spoils gutless deception suffrage wielder fragile",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "passphrase-scrypt",

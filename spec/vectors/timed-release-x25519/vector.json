@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "4717f355-e61a-4ab2-828b-295f7ce460f2",
-    "plaintext_tar_sha256": "60f4bf0b419f08ec215859ae1fb60fde0341b66f29bda6bbb93daa3e2ac6aba1"
+    "package_id": "11bb8284-290c-4cd4-9718-c8eec02fa317",
+    "plaintext_tar_sha256": "3847faa374bb2dccca600c04f103df3b26cff6f0d1ddc554a7a532a2e5c2f21e"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -24,7 +24,7 @@
   },
   "inputs": {
     "identity": "AGE-SECRET-KEY-1ETV7QCZFYLAUGQHXTVPLY3CSCF59SV7P2MW0MAK7HVKWDWAL6DPS79FGCY",
-    "k_release": "HNPkAi+Xm63XVa7PEt06wrKzqi9NX/m0g8Bl/itNKg0",
+    "k_release": "ifZ8j4yeofTy7iQN5fRuBT9Y3HRTFQRzwmPJws0vCMQ",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "timed-release-x25519",

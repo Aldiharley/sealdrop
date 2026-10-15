@@ -2,7 +2,7 @@
   "comment": "§4.1 decode bounds: p=9 exceeds the decoder bound of 8",
   "expect": "header failure",
   "expected": {
-    "plaintext_tar_sha256": "321a75c7dfc3e6c8852b49e2f10d33944c6bdbd82c8381dfd2b7681d2326ab9d"
+    "plaintext_tar_sha256": "4fe53930f53c7c8b1ed7245640a953460dd122e24e131dab5e459e27da7306a3"
   },
   "files": {
     "package": "report.sealdrop.age"
