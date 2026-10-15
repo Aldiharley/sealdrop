@@ -57,6 +57,8 @@ pub struct SealResult {
     pub manifest_doc: Manifest,
     pub passphrase: Option<Passphrase>,
     pub pack: PackReport,
+    /// Why the sender's own identity was left out of the package, if it was.
+    pub self_omitted: Option<String>,
 }
 
 /// `<name>.sealdrop.age` -> (`<name>.manifest.json`, `<name>.manifest.json.minisig`).
@@ -176,9 +178,21 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
     }
     // Passphrase and timed-release packages hold exactly what the caller chose; self is
     // only added to plain recipient packages.
+    let mut self_omitted: Option<String> = None;
     if req.include_self && !passphrase_mode && req.release.is_none() {
         let me = Recipient::parse(&store.recipient_string()?)?;
-        if !specs.iter().any(|r| r.to_string() == me.to_string()) {
+        let given_pq = !specs.is_empty()
+            && specs
+                .iter()
+                .all(|r| policy::is_post_quantum_kind(&r.kind()));
+        let me_pq = policy::is_post_quantum_kind(&me.kind());
+        if !specs.is_empty() && given_pq != me_pq {
+            self_omitted = Some(if given_pq {
+                "your own identity is classical (x25519), so it was not added to this post-quantum package; create a post-quantum identity with `keygen --pq` to include yourself".into()
+            } else {
+                "your own identity is post-quantum, so it was not added to this classical package; the recipients would otherwise be mixed".into()
+            });
+        } else if !specs.iter().any(|r| r.to_string() == me.to_string()) {
             specs.push(me);
         }
     }
@@ -342,5 +356,6 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
         manifest_doc: doc,
         passphrase,
         pack: pack_report,
+        self_omitted,
     })
 }

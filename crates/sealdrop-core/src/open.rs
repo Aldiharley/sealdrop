@@ -21,6 +21,16 @@ pub struct VerifyReport {
     pub signer: String,
     pub trusted_as: Option<String>,
     pub ciphertext_ok: bool,
+    /// True when every recipient in the signed manifest is a post-quantum kind.
+    pub post_quantum: bool,
+}
+
+/// True when every recipient of the signed manifest is a post-quantum kind.
+pub fn post_quantum_kinds(recipients: &[crate::manifest::RecipientInfo]) -> bool {
+    !recipients.is_empty()
+        && recipients
+            .iter()
+            .all(|r| crate::policy::is_post_quantum_kind(&r.kind))
 }
 
 fn resolve_signer(
@@ -114,6 +124,7 @@ fn verify_with(
     }
     Ok(VerifyReport {
         signer: doc.signer.clone(),
+        post_quantum: post_quantum_kinds(&doc.recipients),
         manifest: doc,
         trusted_as,
         ciphertext_ok: true,
@@ -269,6 +280,7 @@ impl age::Identity for IdentityRef<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypt::Recipient;
     use crate::keys::KeyStore;
     use crate::passphrase::WordList;
     use crate::progress::NoProgress;
@@ -319,6 +331,51 @@ mod tests {
 
     fn me(ks: &KeyStore) -> crate::crypt::Recipient {
         crate::crypt::Recipient::parse(&ks.recipient_string().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn classical_self_is_omitted_from_a_pq_package() {
+        let (d, ks) = store(); // x25519 store
+        let pq = crate::pq::Identity::generate();
+        let r = Recipient::parse(&pq.to_public().to_string()).unwrap();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![r]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        assert!(res
+            .self_omitted
+            .as_deref()
+            .unwrap()
+            .contains("post-quantum"));
+        assert_eq!(res.manifest_doc.recipients.len(), 1);
+        let v = verify(&ks, &res.package, None).unwrap();
+        assert!(v.post_quantum);
+        let p = crate::probe::probe(&res.package).unwrap();
+        assert!(p.post_quantum);
+    }
+
+    #[test]
+    fn classical_package_reports_not_post_quantum() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        assert!(res.self_omitted.is_none());
+        assert!(!verify(&ks, &res.package, None).unwrap().post_quantum);
+        assert!(!crate::probe::probe(&res.package).unwrap().post_quantum);
     }
 
     #[test]
