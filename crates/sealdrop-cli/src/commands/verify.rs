@@ -29,6 +29,10 @@ pub fn run(a: Args) -> anyhow::Result<()> {
             .unwrap_or_default()
     );
     out!("created: {}", sanitize(&m.created));
+    out!(
+        "post-quantum: {}",
+        if v.post_quantum { "yes" } else { "no" }
+    );
     if let Some(c) = &m.classification {
         out!("classification: {}", sanitize(c));
     }

@@ -26,8 +26,7 @@ pub struct Args {
     /// Replace files that already exist in the output folder
     #[arg(long)]
     pub overwrite: bool,
-    /// Read the passphrase from the first line of stdin instead of prompting
-    /// (the interactive prompt shows what you type; use --passphrase-stdin to pipe it)
+    /// Read the passphrase from the first line of stdin instead of the hidden prompt
     #[arg(long)]
     pub passphrase_stdin: bool,
 }
@@ -90,13 +89,9 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         Some(read_line_secret()?)
     } else {
         match prompt {
-            Prompt::Required => {
-                eprint!("passphrase (typing is shown; use --passphrase-stdin to pipe it): ");
-                Some(read_line_secret()?)
-            }
+            Prompt::Required => Some(read_secret_prompt("passphrase: ")?),
             Prompt::Optional => {
-                eprint!("Passphrase (leave empty to use your key): ");
-                read_line_optional()?
+                read_secret_prompt_optional("Passphrase (leave empty to use your key): ")?
             }
             Prompt::None => None,
         }
@@ -122,14 +117,20 @@ pub fn run(a: Args) -> anyhow::Result<()> {
         rep.extract.bytes
     );
     match &rep.verify {
-        Some(v) => out!(
-            "verified: signer {}{}",
-            key_display(&v.signer),
-            v.trusted_as
-                .as_ref()
-                .map(|n| format!(" ({})", sanitize(n)))
-                .unwrap_or_default()
-        ),
+        Some(v) => {
+            out!(
+                "verified: signer {}{}",
+                key_display(&v.signer),
+                v.trusted_as
+                    .as_ref()
+                    .map(|n| format!(" ({})", sanitize(n)))
+                    .unwrap_or_default()
+            );
+            out!(
+                "post-quantum: {}",
+                if v.post_quantum { "yes" } else { "no" }
+            );
+        }
         None => out!("signature NOT verified (--skip-verify)"),
     }
     if let Some(u) = &rep.release {
@@ -168,6 +169,29 @@ pub fn needs_prompt(timed: bool, inner_kind: Option<&str>, has_identity: bool) -
         None if has_identity => Prompt::Optional,
         None => Prompt::Required,
     }
+}
+
+/// Reads a passphrase without echo when stdin is a terminal; otherwise reads one line and
+/// says that the input was not hidden.
+fn read_secret_prompt(prompt: &str) -> anyhow::Result<SecretString> {
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        let s = Zeroizing::new(rpassword::prompt_password(prompt)?);
+        anyhow::ensure!(!s.trim().is_empty(), "empty passphrase");
+        return Ok(SecretString::from(s.trim().to_string()));
+    }
+    eprint!("{prompt}(input is not a terminal, so it is read as a line) ");
+    read_line_secret()
+}
+
+/// Like `read_secret_prompt`, but an empty answer means "none".
+fn read_secret_prompt_optional(prompt: &str) -> anyhow::Result<Option<SecretString>> {
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        let s = Zeroizing::new(rpassword::prompt_password(prompt)?);
+        let t = s.trim();
+        return Ok((!t.is_empty()).then(|| SecretString::from(t.to_string())));
+    }
+    eprint!("{prompt}(input is not a terminal, so it is read as a line) ");
+    read_line_optional()
 }
 
 /// Reads one line from stdin; an empty line (or end of input) is `None`.

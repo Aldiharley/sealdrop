@@ -874,3 +874,106 @@ fn skip_verify_says_so() {
             "signature NOT verified (--skip-verify)",
         ));
 }
+
+#[test]
+fn pq_keygen_seal_verify_open_and_mixing_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home)
+        .args(["keygen", "--pq"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("age1pq1"))
+        .stderr(predicate::str::contains("post-quantum"));
+    let out = cmd(&home).arg("recipient").output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    let rec = text.lines().next().unwrap().trim().to_string();
+    assert!(rec.starts_with("age1pq1"));
+    assert!(text.contains("kind: pq"), "{text}");
+
+    let input = fixture(d.path());
+    let outdir = d.path().join("bundle");
+    cmd(&home)
+        .arg("seal")
+        .arg(&input)
+        .args(["-r", &rec, "-o"])
+        .arg(&outdir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("post-quantum: yes"));
+    let pkg = outdir.join("report.sealdrop.age");
+    cmd(&home)
+        .arg("verify")
+        .arg(&pkg)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("post-quantum: yes"))
+        .stdout(predicate::str::contains("recipient: pq"));
+    let manifest = std::fs::read_to_string(outdir.join("report.manifest.json")).unwrap();
+    assert!(manifest.contains("\"key_commitment\""));
+    let restored = d.path().join("restored");
+    cmd(&home)
+        .arg("open")
+        .arg(&pkg)
+        .arg("-o")
+        .arg(&restored)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("post-quantum: yes"));
+    assert_eq!(
+        std::fs::read(restored.join("report/a.pdf")).unwrap(),
+        b"%PDF"
+    );
+
+    // A classical recipient next to the PQ one is refused by policy (exit 3) and names the
+    // problem once.
+    let classic = {
+        let h2 = d.path().join("home2");
+        cmd(&h2).arg("keygen").assert().success();
+        let o = cmd(&h2).arg("recipient").output().unwrap();
+        String::from_utf8(o.stdout)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    cmd(&home)
+        .arg("seal")
+        .arg(&input)
+        .args(["-r", &rec, "-r", &classic, "-o"])
+        .arg(d.path().join("b2"))
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("cannot be mixed"))
+        .stderr(predicate::function(|s: &str| {
+            s.matches("cannot be mixed").count() == 1
+        }));
+}
+
+#[test]
+fn classical_self_is_omitted_from_pq_packages_with_a_note() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home");
+    cmd(&home).arg("keygen").assert().success();
+    let pq_home = d.path().join("pqhome");
+    cmd(&pq_home).args(["keygen", "--pq"]).assert().success();
+    let o = cmd(&pq_home).arg("recipient").output().unwrap();
+    let rec = String::from_utf8(o.stdout)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    cmd(&home)
+        .arg("seal")
+        .arg(fixture(d.path()))
+        .args(["-r", &rec, "-o"])
+        .arg(d.path().join("b"))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("not added"));
+}

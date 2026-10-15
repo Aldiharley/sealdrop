@@ -4460,6 +4460,7 @@ dependencies = [
  "minisign",
  "predicates",
  "qrcode",
+ "rpassword",
  "sealdrop-core",
  "sealdrop-release",
  "serde_json",
