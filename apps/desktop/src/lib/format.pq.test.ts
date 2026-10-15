@@ -2,8 +2,8 @@
 // this file with rolldown first, since Node 20 does not strip TypeScript types).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { kindLabel, recipientTone, recipientsText } from "./format";
-import { mapSealError } from "./errors";
+import { defaultPqForReplace, kindLabel, recipientTone, recipientsText } from "./format";
+import { mapSealError, selfOmittedText } from "./errors";
 import { mock } from "./mock";
 import type * as T from "./types";
 
@@ -51,6 +51,28 @@ describe("post-quantum kinds", () => {
     assert.equal(m.field, undefined);
     // Other policy refusals keep the generic wording.
     assert.match(mapSealError("policy refused: no recipients given").text, /^sealdrop refused to seal this: no recipients given\.$/);
+  });
+});
+
+describe("Keys: Replace keeps the current kind", () => {
+  it("starts the switch from the current identity", () => {
+    assert.equal(defaultPqForReplace("pq"), true);
+    assert.equal(defaultPqForReplace("x25519"), false);
+    assert.equal(defaultPqForReplace(null), false);
+    assert.equal(defaultPqForReplace(undefined), false);
+  });
+});
+
+describe("self-omitted note", () => {
+  it("swaps the CLI hint for app wording and keeps the rest", () => {
+    const core =
+      "your own identity is classical (x25519), so it was not added to this post-quantum package; create a post-quantum identity with `keygen --pq` to include yourself";
+    assert.equal(
+      selfOmittedText(core),
+      "your own identity is classical (x25519), so it was not added to this post-quantum package; turn on Post-quantum identity in Keys and create a new identity to include yourself",
+    );
+    const other = "your own identity is post-quantum, so it was not added to this classical package; the recipients would otherwise be mixed";
+    assert.equal(selfOmittedText(other), other);
   });
 });
 

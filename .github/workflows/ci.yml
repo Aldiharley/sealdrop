@@ -54,6 +54,9 @@ jobs:
       - run: npm ci
         if: ${{ hashFiles('apps/desktop/package.json') != '' }}
         working-directory: apps/desktop
+      - run: npm test
+        if: ${{ hashFiles('apps/desktop/package.json') != '' }}
+        working-directory: apps/desktop
       - run: npm run build
         if: ${{ hashFiles('apps/desktop/package.json') != '' }}
         working-directory: apps/desktop

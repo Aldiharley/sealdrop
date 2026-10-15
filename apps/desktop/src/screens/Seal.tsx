@@ -19,7 +19,7 @@ import {
   windowText,
 } from "../lib/format";
 import type { WindowUnit } from "../lib/format";
-import { mapSealError } from "../lib/errors";
+import { mapSealError, selfOmittedText } from "../lib/errors";
 import { mockQuery, useIdleClear, useOnceWhen, useProgress } from "../lib/hooks";
 import type { RecipientCheck, SealArgs, SealOut } from "../lib/types";
 import { Badge, Chip } from "../components/Chip";
@@ -452,7 +452,7 @@ export default function Seal({ active }: { active: boolean }) {
                 <div>
                   3 files written to <span className="mono">{sealed.folder}</span>.
                 </div>
-                {sealed.selfOmitted ? <Notice tone="warn">{sealed.selfOmitted}</Notice> : null}
+                {sealed.selfOmitted ? <Notice tone="warn">{selfOmittedText(sealed.selfOmitted)}</Notice> : null}
                 <div className="stack stack--sm">
                   <KV k="Package">
                     <span className="cluster" style={{ gap: 12 }}>

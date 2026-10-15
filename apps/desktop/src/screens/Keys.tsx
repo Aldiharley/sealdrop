@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText } from "../lib/api";
 import { useApp } from "../lib/app";
-import { formatDate, plural, shortSigner } from "../lib/format";
+import { defaultPqForReplace, formatDate, plural, shortSigner } from "../lib/format";
 import { g1, mapReceiptFetchError } from "../lib/errors";
 import { baseName } from "../lib/format";
 import { mockQuery, useOnceWhen } from "../lib/hooks";
@@ -199,7 +199,7 @@ export default function Keys({ active }: { active: boolean }) {
                     onClick={() => {
                       setConfirmText("");
                       setReplaceError(null);
-                      setPq(false);
+                      setPq(defaultPqForReplace(identity.kind));
                       setReplaceOpen(true);
                     }}
                   >
