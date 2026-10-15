@@ -1,15 +1,15 @@
 {
   "format": "sealdrop-manifest/1",
-  "package_id": "11bb8284-290c-4cd4-9718-c8eec02fa317",
-  "tool": "sealdrop 0.2.2",
-  "created": "2026-10-15T14:04:54Z",
+  "package_id": "2c949649-cd85-4673-9163-b5d429297d88",
+  "tool": "sealdrop 0.3.0",
+  "created": "2026-10-15T15:33:07Z",
   "ciphertext": {
     "file": "report.sealdrop.age",
-    "size": 5721,
-    "sha256": "7a1852e6aa98130c4e854d0798a124af927206adb25043c32f863d1f1c8f17e6"
+    "size": 5701,
+    "sha256": "e91136fed68f713860ec764e23a30fa2d3e45dae978796ad3677cb89507a3291"
   },
-  "plaintext_tar_sha256": "3847faa374bb2dccca600c04f103df3b26cff6f0d1ddc554a7a532a2e5c2f21e",
-  "key_commitment": "fea5467e7fd7cd6ee50dc6c9683fc0f2c5bcecb0481e8db565dc0545a089868c",
+  "plaintext_tar_sha256": "1858598e6b543af8e659f3333d1c2cbb349e6fca022bf5c65fae7c162a0dd140",
+  "key_commitment": "f711855279d14a60e5282c1e2575af7aeaabe0edaf2311a23c868f20667002d1",
   "recipients": [
     {
       "kind": "x25519",
@@ -20,7 +20,7 @@
   "classification": "spec-vector",
   "release": {
     "service": "https://release.invalid",
-    "release_id": "65d1f17e-4f0a-43f8-9042-3caf9d333653",
+    "release_id": "e7d7644f-cb26-4ce0-9e66-94dbd3c4d2f2",
     "window_secs": 600,
     "service_key": "RWQfgHiVfhzK5Q6PKw1I1GIPAA87WKMT4qyYcmwm39QJwyyfejHO1V8F"
   },

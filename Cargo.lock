@@ -4449,7 +4449,7 @@ dependencies = [
 
 [[package]]
 name = "sealdrop-cli"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "age",
  "anyhow",
@@ -4471,7 +4471,7 @@ dependencies = [
 
 [[package]]
 name = "sealdrop-core"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "age",
  "age-core",
@@ -4507,7 +4507,7 @@ dependencies = [
 
 [[package]]
 name = "sealdrop-desktop"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "age",
  "bech32",
@@ -4525,7 +4525,7 @@ dependencies = [
 
 [[package]]
 name = "sealdrop-release"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",

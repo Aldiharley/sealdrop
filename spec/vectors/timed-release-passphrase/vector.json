@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "7f83dcbd-26ea-4ac4-82c5-2b23271625ca",
-    "plaintext_tar_sha256": "3847faa374bb2dccca600c04f103df3b26cff6f0d1ddc554a7a532a2e5c2f21e"
+    "package_id": "ae7158dd-264f-4049-82a7-ac21c87a4992",
+    "plaintext_tar_sha256": "2fb896f4c23e74dcc05dc8438e1a768b29d1ed358fa5d93e3cd393b8f8b9a1c7"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,8 +23,8 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "k_release": "CTvu9IiGVhDZigerLHSldH+hfQ4Jv0LHimTPA2Mzncw",
-    "passphrase": "custodian laziness abridge cruncher drivable earplugs",
+    "k_release": "PMBIdlMbJvTm0YobwJG5KZBXKaaNxT6HWJcwWAUhiSI",
+    "passphrase": "boxy stock chump clumsily agreeing overstay",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "timed-release-passphrase",

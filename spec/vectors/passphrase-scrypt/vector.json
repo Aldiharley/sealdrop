@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "37261c59-00ea-49ae-9847-92579cdb913e",
-    "plaintext_tar_sha256": "6086574f9cb6d4efbbd227b7ab1c4aa18215e0fc090e21ead7645699e41fb406"
+    "package_id": "643a55ae-a48b-4847-a52b-34afaf909f67",
+    "plaintext_tar_sha256": "cfa28f61cdb818ea09cff855dcc892425dceb9f679d53c40dd0ead4029202d2b"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,7 +23,7 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "passphrase": "spoils gutless deception suffrage wielder fragile",
+    "passphrase": "stimulus helpful poking marigold washroom cruelty",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "passphrase-scrypt",

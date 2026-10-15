@@ -1,14 +1,14 @@
 {
   "format": "sealdrop-manifest/1",
-  "package_id": "e5f6b493-38ca-4f7f-9914-e0c69283ec72",
-  "tool": "sealdrop 0.2.2",
-  "created": "2026-10-15T14:04:55Z",
+  "package_id": "ce88cfd1-d630-48c6-8c1f-f507674f54e7",
+  "tool": "sealdrop 0.3.0",
+  "created": "2026-10-15T15:33:09Z",
   "ciphertext": {
     "file": "report.sealdrop.age",
-    "size": 5469,
-    "sha256": "258598fe6291ee3f31ef8256b1c94ad39e95e146ea5749d625efac5bb05cbee1"
+    "size": 5488,
+    "sha256": "a3eb7db0db91de30312a13ee33d6c9353508a90423ca01aa402e1160af7f62da"
   },
-  "plaintext_tar_sha256": "4fe53930f53c7c8b1ed7245640a953460dd122e24e131dab5e459e27da7306a3",
+  "plaintext_tar_sha256": "4edb66d2260788770a7454dd6831dfda33b0db3e9f90b86efe415a65d20a2f87",
   "key_commitment": "0000000000000000000000000000000000000000000000000000000000000000",
   "recipients": [
     {
