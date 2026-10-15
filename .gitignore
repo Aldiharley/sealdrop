@@ -51,3 +51,7 @@ desktop.ini
 /scratch/
 *.log
 .superpowers/
+
+# deep-research working folders (reports are copied into docs/research when kept)
+research_notes/
+reports/
