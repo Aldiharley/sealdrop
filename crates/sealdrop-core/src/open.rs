@@ -206,9 +206,9 @@ pub fn open(
     let mut inner: Vec<Box<dyn age::Identity>> = Vec::new();
     if store.has_identity() {
         let mut have_secret = true;
-        match store.identity() {
-            Ok(id) => inner.push(Box::new(id)),
-            // Plugin-only identity files have no x25519 secret key line.
+        match store.native_identities() {
+            Ok(ids) => inner.extend(ids),
+            // Plugin-only identity files have no native secret key line.
             Err(Error::InvalidIdentity) => have_secret = false,
             Err(e) => return Err(e),
         }
@@ -277,7 +277,8 @@ mod tests {
     fn store() -> (tempfile::TempDir, KeyStore) {
         let d = tempfile::tempdir().unwrap();
         let ks = KeyStore::open(d.path().join("ks"));
-        ks.generate(false).unwrap();
+        ks.generate(false, crate::keys::IdentityKind::X25519)
+            .unwrap();
         (d, ks)
     }
 
@@ -317,6 +318,30 @@ mod tests {
 
     fn me(ks: &KeyStore) -> crate::crypt::Recipient {
         crate::crypt::Recipient::parse(&ks.recipient_string().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn pq_store_seals_to_self_and_opens() {
+        let d = tempfile::tempdir().unwrap();
+        let ks = KeyStore::open(d.path().join("ks"));
+        ks.generate(false, crate::keys::IdentityKind::Pq).unwrap();
+        let inp = input(d.path());
+        let out = d.path().join("out");
+        let r = seal(
+            &ks,
+            req(inp, out.clone(), Mode::Recipients(vec![me(&ks)])),
+            &NoProgress,
+        )
+        .unwrap();
+        assert_eq!(r.manifest_doc.recipients[0].kind, "pq");
+        let rep = open(
+            &ks,
+            open_req(r.package, d.path().join("restored")),
+            Box::new(MemoryFetch::expired()),
+            &NoProgress,
+        )
+        .unwrap();
+        assert_eq!(rep.extract.files, 2);
     }
 
     #[test]
@@ -609,7 +634,9 @@ mod tests {
 
         // A different key store does not trust this signer.
         let other = KeyStore::open(d.path().join("other"));
-        other.generate(false).unwrap();
+        other
+            .generate(false, crate::keys::IdentityKind::X25519)
+            .unwrap();
         let err = verify(&other, &res.package, None).map(|_| ()).unwrap_err();
         assert!(err.to_string().contains("not trusted"), "{err}");
         // ... until it is added to the trust list.
@@ -664,7 +691,9 @@ mod tests {
         m["signer"] = serde_json::Value::String(evil.into());
         std::fs::write(&res.manifest, serde_json::to_vec(&m).unwrap()).unwrap();
         let other = KeyStore::open(d.path().join("other"));
-        other.generate(false).unwrap();
+        other
+            .generate(false, crate::keys::IdentityKind::X25519)
+            .unwrap();
         for explicit in [None, Some(real.as_str())] {
             let err = verify(&other, &res.package, explicit)
                 .map(|_| ())

@@ -43,7 +43,8 @@ fn keys() -> (KeyStore, minisign::KeyPair) {
     fs::create_dir_all(&k).unwrap();
     let ks = KeyStore::open(k.join("store"));
     if !ks.exists() {
-        ks.generate(false).unwrap();
+        ks.generate(false, sealdrop_core::keys::IdentityKind::X25519)
+            .unwrap();
     }
     let sk_path = k.join("service.key");
     if !sk_path.exists() {

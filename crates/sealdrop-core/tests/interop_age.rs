@@ -40,7 +40,8 @@ fn stock_age_decrypts_recipient_mode_and_tar_extracts() {
     }
     let d = tempfile::tempdir().unwrap();
     let ks = KeyStore::open(d.path().join("ks"));
-    ks.generate(false).unwrap();
+    ks.generate(false, sealdrop_core::keys::IdentityKind::X25519)
+        .unwrap();
     let me = sealdrop_core::crypt::Recipient::parse(&ks.recipient_string().unwrap()).unwrap();
     let res = seal(
         &ks,
@@ -105,7 +106,8 @@ fn stock_age_decrypts_recipient_mode_and_tar_extracts() {
 fn scrypt_mode_opens_with_the_age_crate_not_the_go_cli() {
     let d = tempfile::tempdir().unwrap();
     let ks = KeyStore::open(d.path().join("ks"));
-    ks.generate(false).unwrap();
+    ks.generate(false, sealdrop_core::keys::IdentityKind::X25519)
+        .unwrap();
     let res = seal(
         &ks,
         SealRequest {
@@ -152,7 +154,8 @@ fn stock_age_rejects_argon2id_package() {
     }
     let d = tempfile::tempdir().unwrap();
     let ks = KeyStore::open(d.path().join("ks"));
-    ks.generate(false).unwrap();
+    ks.generate(false, sealdrop_core::keys::IdentityKind::X25519)
+        .unwrap();
     let res = seal(
         &ks,
         SealRequest {
@@ -190,4 +193,104 @@ fn stock_age_rejects_argon2id_package() {
         !err.trim().is_empty(),
         "stock age must explain the failure on stderr"
     );
+}
+
+/// Go age decrypts a sealdrop package sealed to a sealdrop-generated PQ identity.
+#[test]
+fn stock_age_decrypts_pq_recipient_package() {
+    if !age_available() {
+        eprintln!("skipping: age not installed");
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let ks = KeyStore::open(d.path().join("ks"));
+    ks.generate(false, sealdrop_core::keys::IdentityKind::Pq)
+        .unwrap();
+    let me = sealdrop_core::crypt::Recipient::parse(&ks.recipient_string().unwrap()).unwrap();
+    assert_eq!(me.kind(), "pq");
+    let res = seal(
+        &ks,
+        SealRequest {
+            input: fixture(d.path()),
+            out_dir: d.path().join("out"),
+            mode: Mode::Recipients(vec![me]),
+            include_self: false,
+            allow_unrecoverable: false,
+            armor: false,
+            classification: None,
+            expires: None,
+            release: None,
+        },
+        &NoProgress,
+    )
+    .unwrap();
+    let tar = d.path().join("plain.tar");
+    let out = Command::new("age")
+        .arg("-d")
+        .arg("-i")
+        .arg(ks.dir().join("identity.txt"))
+        .arg("-o")
+        .arg(&tar)
+        .arg(&res.package)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "age -d failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let (sha, _) = sealdrop_core::hashing::sha256_file(&tar).unwrap();
+    assert_eq!(sha, res.pack.tar_sha256);
+    // age-keygen (when present) derives the same recipient from our identity file.
+    if Command::new("age-keygen")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        let y = Command::new("age-keygen")
+            .arg("-y")
+            .arg(ks.dir().join("identity.txt"))
+            .output()
+            .unwrap();
+        assert!(y.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&y.stdout).trim(),
+            ks.recipient_string().unwrap()
+        );
+    }
+}
+
+/// sealdrop opens a file Go age encrypted to a sealdrop PQ recipient (the raw age layer).
+#[test]
+fn sealdrop_decrypts_what_stock_age_encrypted_to_pq() {
+    if !age_available() {
+        eprintln!("skipping: age not installed");
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let id = sealdrop_core::pq::Identity::generate();
+    let ct = d.path().join("x.age");
+    std::fs::write(d.path().join("x.txt"), b"from go age").unwrap();
+    let out = Command::new("age")
+        .arg("-r")
+        .arg(id.to_public().to_string())
+        .arg("-o")
+        .arg(&ct)
+        .arg(d.path().join("x.txt"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "age -e failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(id)];
+    let mut pt = Vec::new();
+    std::io::Read::read_to_end(
+        &mut sealdrop_core::crypt::decrypt_reader(std::fs::File::open(&ct).unwrap(), &ids).unwrap(),
+        &mut pt,
+    )
+    .unwrap();
+    assert_eq!(pt, b"from go age");
 }

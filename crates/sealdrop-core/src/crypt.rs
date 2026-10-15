@@ -33,6 +33,8 @@ fn redact(s: &str) -> String {
 #[allow(clippy::large_enum_variant)]
 pub enum Recipient {
     X25519(age::x25519::Recipient),
+    /// age's native hybrid type (`age1pq1…`, ML-KEM-768 + X25519).
+    Pq(crate::pq::Recipient),
     Hybrid(age::tagpq::Recipient),
     Plugin(age::plugin::Recipient),
 }
@@ -42,6 +44,10 @@ impl Recipient {
         let s = s.trim();
         if let Ok(r) = age::x25519::Recipient::from_str(s) {
             return Ok(Self::X25519(r));
+        }
+        // Before the plugin fallback: `age1pq1…` would otherwise parse as plugin `pq`.
+        if let Ok(r) = crate::pq::Recipient::from_str(s) {
+            return Ok(Self::Pq(r));
         }
         if let Ok(r) = age::tagpq::Recipient::from_str(s) {
             return Ok(Self::Hybrid(r));
@@ -55,6 +61,7 @@ impl Recipient {
     pub fn kind(&self) -> String {
         match self {
             Self::X25519(_) => "x25519".into(),
+            Self::Pq(_) => "pq".into(),
             Self::Hybrid(_) => "hybrid-pq".into(),
             Self::Plugin(p) => format!("plugin:{}", p.plugin()),
         }
@@ -77,6 +84,7 @@ impl fmt::Display for Recipient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::X25519(r) => write!(f, "{r}"),
+            Self::Pq(r) => write!(f, "{r}"),
             Self::Hybrid(r) => write!(f, "{r}"),
             Self::Plugin(r) => write!(f, "{r}"),
         }
@@ -117,6 +125,7 @@ pub fn to_age_recipients(specs: &[Recipient]) -> Result<Vec<Box<dyn age::Recipie
     for s in specs {
         match s {
             Recipient::X25519(r) => out.push(Box::new(r.clone())),
+            Recipient::Pq(r) => out.push(Box::new(r.clone())),
             Recipient::Hybrid(r) => out.push(Box::new(r.clone())),
             Recipient::Plugin(p) => plugins
                 .entry(p.plugin().to_string())
@@ -254,6 +263,35 @@ mod tests {
         assert_eq!(r.fingerprint().len(), 16);
         assert_eq!(r.to_string(), s);
         assert!(Recipient::parse("age1notvalid").is_err());
+    }
+
+    #[test]
+    fn parses_pq_recipient_before_plugin_fallback() {
+        let id = crate::pq::Identity::generate();
+        let s = id.to_public().to_string();
+        let r = Recipient::parse(&s).unwrap();
+        assert!(matches!(r, Recipient::Pq(_)));
+        assert_eq!(r.kind(), "pq");
+        assert_eq!(r.plugin_name(), None);
+        assert_eq!(r.to_string(), s);
+        assert_eq!(r.fingerprint().len(), 16);
+    }
+
+    #[test]
+    fn round_trips_to_pq_recipient() {
+        let id = crate::pq::Identity::generate();
+        let specs = vec![Recipient::parse(&id.to_public().to_string()).unwrap()];
+        let recips = to_age_recipients(&specs).unwrap();
+        let mut w = encrypt_writer(Vec::new(), &recips, false).unwrap();
+        w.write_all(b"pq hello").unwrap();
+        let ct = w.finish().unwrap();
+        let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(id)];
+        let mut pt = Vec::new();
+        decrypt_reader(&ct[..], &ids)
+            .unwrap()
+            .read_to_end(&mut pt)
+            .unwrap();
+        assert_eq!(pt, b"pq hello");
     }
 
     #[test]

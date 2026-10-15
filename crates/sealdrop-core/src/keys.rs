@@ -56,10 +56,37 @@ impl Default for Settings {
     }
 }
 
+/// The native age identity type a key store holds: classic X25519 (`age1…`) or age's
+/// post-quantum hybrid (`age1pq1…`, ML-KEM-768 + X25519).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IdentityKind {
+    X25519,
+    Pq,
+}
+
+impl IdentityKind {
+    /// Stable lowercase name: `x25519` or `pq`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::X25519 => "x25519",
+            Self::Pq => "pq",
+        }
+    }
+}
+
+impl fmt::Display for IdentityKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Public result of `KeyStore::generate`; holds no secret material.
 #[derive(Debug, Clone)]
 pub struct KeyInfo {
     pub recipient: String,
     pub signer: String,
+    pub kind: IdentityKind,
 }
 
 pub struct KeyStore {
@@ -153,7 +180,9 @@ impl KeyStore {
         self.identity_path().exists() && self.sign_key_path().exists()
     }
 
-    pub fn generate(&self, force: bool) -> Result<KeyInfo> {
+    /// Creates a fresh `kind` identity and a minisign signing key. Refuses to replace
+    /// either existing file unless `force` is set.
+    pub fn generate(&self, force: bool, kind: IdentityKind) -> Result<KeyInfo> {
         if (self.identity_path().exists() || self.sign_key_path().exists()) && !force {
             return Err(Error::KeyStore(format!(
                 "identity already exists in {}; use --force to replace",
@@ -166,12 +195,23 @@ impl KeyStore {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))?;
         }
-        let id = age::x25519::Identity::generate();
-        let recipient = id.to_public().to_string();
+        let (recipient, secret_line): (String, Zeroizing<String>) = match kind {
+            IdentityKind::X25519 => {
+                let id = age::x25519::Identity::generate();
+                (
+                    id.to_public().to_string(),
+                    Zeroizing::new(id.to_string().expose_secret().to_string()),
+                )
+            }
+            IdentityKind::Pq => {
+                let id = crate::pq::Identity::generate();
+                (id.to_public().to_string(), Zeroizing::new(id.to_string()))
+            }
+        };
         let created = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
         let body = Zeroizing::new(format!(
             "# created: {created}\n# public key: {recipient}\n{}\n",
-            id.to_string().expose_secret()
+            secret_line.as_str()
         ));
         write_private(&self.identity_path(), &body)?;
 
@@ -188,6 +228,7 @@ impl KeyStore {
         Ok(KeyInfo {
             recipient,
             signer: kp.pk.to_base64(),
+            kind,
         })
     }
 
@@ -206,6 +247,8 @@ impl KeyStore {
             .collect())
     }
 
+    /// The X25519 identity (`AGE-SECRET-KEY-1…` line) only; a PQ store has none and
+    /// yields `InvalidIdentity`. `native_identities` covers both kinds.
     pub fn identity(&self) -> Result<age::x25519::Identity> {
         let lines = self.identity_lines()?;
         let line = lines
@@ -224,8 +267,41 @@ impl KeyStore {
             .collect())
     }
 
+    /// The native identity type in the identity file.
+    pub fn identity_kind(&self) -> Result<IdentityKind> {
+        let lines = self.identity_lines()?;
+        if lines.iter().any(|l| l.starts_with("AGE-SECRET-KEY-PQ-1")) {
+            Ok(IdentityKind::Pq)
+        } else if lines.iter().any(|l| l.starts_with("AGE-SECRET-KEY-1")) {
+            Ok(IdentityKind::X25519)
+        } else {
+            Err(Error::InvalidIdentity)
+        }
+    }
+
+    fn pq_identity(&self) -> Result<crate::pq::Identity> {
+        let lines = self.identity_lines()?;
+        let line = lines
+            .iter()
+            .find(|l| l.starts_with("AGE-SECRET-KEY-PQ-1"))
+            .ok_or(Error::InvalidIdentity)?;
+        crate::pq::Identity::from_str(line).map_err(|_| Error::InvalidIdentity)
+    }
+
+    /// Every native (non-plugin) identity in the file, boxed for age.
+    pub fn native_identities(&self) -> Result<Vec<Box<dyn age::Identity>>> {
+        match self.identity_kind()? {
+            IdentityKind::X25519 => Ok(vec![Box::new(self.identity()?)]),
+            IdentityKind::Pq => Ok(vec![Box::new(self.pq_identity()?)]),
+        }
+    }
+
+    /// The public recipient (`age1…` or `age1pq1…`) of the store's native identity.
     pub fn recipient_string(&self) -> Result<String> {
-        Ok(self.identity()?.to_public().to_string())
+        match self.identity_kind()? {
+            IdentityKind::X25519 => Ok(self.identity()?.to_public().to_string()),
+            IdentityKind::Pq => Ok(self.pq_identity()?.to_public().to_string()),
+        }
     }
 
     pub fn signing_key(&self) -> Result<minisign::SecretKey> {
@@ -317,13 +393,13 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let ks = KeyStore::open(d.path().join("store"));
         assert!(!ks.exists());
-        let info = ks.generate(false).unwrap();
+        let info = ks.generate(false, IdentityKind::X25519).unwrap();
         assert!(info.recipient.starts_with("age1"));
         assert!(ks.exists());
         assert_eq!(ks.recipient_string().unwrap(), info.recipient);
         assert_eq!(ks.signing_public_string().unwrap(), info.signer);
-        assert!(ks.generate(false).is_err());
-        let info2 = ks.generate(true).unwrap();
+        assert!(ks.generate(false, IdentityKind::X25519).is_err());
+        let info2 = ks.generate(true, IdentityKind::X25519).unwrap();
         assert_ne!(info2.recipient, info.recipient);
         ks.add_trusted("alice", &info.signer).unwrap();
         assert_eq!(ks.trusted().unwrap().len(), 1);
@@ -338,6 +414,29 @@ mod tests {
             ks.settings().unwrap().release_service.as_deref(),
             Some("https://r.example")
         );
+    }
+
+    #[test]
+    fn pq_identity_persists_and_reloads() {
+        let d = tempfile::tempdir().unwrap();
+        let ks = KeyStore::open(d.path().join("store"));
+        let info = ks.generate(false, IdentityKind::Pq).unwrap();
+        assert_eq!(info.kind, IdentityKind::Pq);
+        assert!(info.recipient.starts_with("age1pq1"));
+        assert_eq!(ks.identity_kind().unwrap(), IdentityKind::Pq);
+        assert_eq!(ks.recipient_string().unwrap(), info.recipient);
+        // No x25519 secret in a PQ store, but one native identity.
+        assert!(matches!(ks.identity(), Err(Error::InvalidIdentity)));
+        assert_eq!(ks.native_identities().unwrap().len(), 1);
+        let text = std::fs::read_to_string(ks.dir().join("identity.txt")).unwrap();
+        assert!(text.contains("\nAGE-SECRET-KEY-PQ-1"));
+        assert!(text.contains("# public key: age1pq1"));
+        // Classic store still reports x25519.
+        let ks2 = KeyStore::open(d.path().join("store2"));
+        let info2 = ks2.generate(false, IdentityKind::X25519).unwrap();
+        assert_eq!(info2.kind, IdentityKind::X25519);
+        assert_eq!(ks2.identity_kind().unwrap(), IdentityKind::X25519);
+        assert_eq!(ks2.native_identities().unwrap().len(), 1);
     }
 
     #[test]
@@ -358,7 +457,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
         let ks = KeyStore::open(d.path().join("store"));
-        ks.generate(false).unwrap();
+        ks.generate(false, IdentityKind::X25519).unwrap();
         ks.save_settings(&Settings::default()).unwrap();
         for f in ["identity.txt", "sign.key", "settings.json"] {
             let mode = std::fs::metadata(ks.dir().join(f))
@@ -374,7 +473,7 @@ mod tests {
     fn identity_and_signing_key_reload() {
         let d = tempfile::tempdir().unwrap();
         let ks = KeyStore::open(d.path().join("store"));
-        let info = ks.generate(false).unwrap();
+        let info = ks.generate(false, IdentityKind::X25519).unwrap();
         assert_eq!(
             ks.identity().unwrap().to_public().to_string(),
             info.recipient
@@ -393,7 +492,7 @@ mod tests {
         std::fs::create_dir_all(ks.dir()).unwrap();
         let path = ks.dir().join("identity.txt");
         std::fs::write(&path, "AGE-SECRET-KEY-1PRECIOUS\n").unwrap();
-        assert!(ks.generate(false).is_err());
+        assert!(ks.generate(false, IdentityKind::X25519).is_err());
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "AGE-SECRET-KEY-1PRECIOUS\n"
@@ -403,7 +502,7 @@ mod tests {
         let ks2 = KeyStore::open(d2.path().join("store"));
         std::fs::create_dir_all(ks2.dir()).unwrap();
         std::fs::write(ks2.dir().join("sign.key"), "precious").unwrap();
-        assert!(ks2.generate(false).is_err());
+        assert!(ks2.generate(false, IdentityKind::X25519).is_err());
         assert_eq!(
             std::fs::read_to_string(ks2.dir().join("sign.key")).unwrap(),
             "precious"
@@ -414,8 +513,8 @@ mod tests {
     fn generate_leaves_no_tmp_files() {
         let d = tempfile::tempdir().unwrap();
         let ks = KeyStore::open(d.path().join("store"));
-        ks.generate(false).unwrap();
-        ks.generate(true).unwrap();
+        ks.generate(false, IdentityKind::X25519).unwrap();
+        ks.generate(true, IdentityKind::X25519).unwrap();
         ks.save_settings(&Settings::default()).unwrap();
         let mut names: Vec<String> = std::fs::read_dir(ks.dir())
             .unwrap()
@@ -432,7 +531,7 @@ mod tests {
     fn trusted_names_are_allow_listed() {
         let d = tempfile::tempdir().unwrap();
         let ks = KeyStore::open(d.path().join("store"));
-        let info = ks.generate(false).unwrap();
+        let info = ks.generate(false, IdentityKind::X25519).unwrap();
         let backslash = String::from_utf8(vec![b'a', 92, b'b']).unwrap();
         for bad in [
             "C:x",

@@ -256,7 +256,8 @@ pub fn get_identity() -> CmdResult<IdentityInfo> {
 #[tauri::command]
 pub fn generate_identity(force: bool) -> CmdResult<IdentityInfo> {
     let ks = store();
-    ks.generate(force).map_err(ce)?;
+    ks.generate(force, sealdrop_core::keys::IdentityKind::X25519)
+        .map_err(ce)?;
     Ok(identity_info(&ks))
 }
 
@@ -893,7 +894,8 @@ mod tests {
 
     fn fast_store(dir: &Path) -> KeyStore {
         let ks = KeyStore::open(dir);
-        ks.generate(false).unwrap();
+        ks.generate(false, sealdrop_core::keys::IdentityKind::X25519)
+            .unwrap();
         // Tests only: a cheap scrypt cost. The commands themselves accept 18 or 20.
         ks.save_settings(&Settings {
             scrypt_log_n: 10,
@@ -1381,7 +1383,8 @@ mod tests {
 
         // Opening without a passphrase is refused by the core before any network call.
         let ks = KeyStore::open(d.path().join("ks"));
-        ks.generate(false).unwrap();
+        ks.generate(false, sealdrop_core::keys::IdentityKind::X25519)
+            .unwrap();
         let mut req = open_args(
             &package.display().to_string(),
             Some(&d.path().join("out")),
