@@ -1346,6 +1346,7 @@ mod tests {
                 sha256: String::new(),
             },
             plaintext_tar_sha256: String::new(),
+            key_commitment: None,
             recipients: vec![RecipientInfo {
                 kind: "scrypt".into(),
                 fingerprint: String::new(),

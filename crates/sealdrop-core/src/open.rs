@@ -249,10 +249,30 @@ pub fn open(
             service: args.service.clone(),
         });
     }
+    // Spec 5.4 step 7: a verified manifest that carries a key commitment binds the file
+    // key. The check runs on the unwrapped file key, before age derives a payload key, so
+    // a mismatch yields no plaintext. Unverified or older manifests are not checked.
+    let expected = verify_report
+        .as_ref()
+        .and_then(|v| v.manifest.key_commitment.as_deref())
+        .map(|s| {
+            crypt::parse_commitment(s)
+                .ok_or_else(|| Error::Verify("manifest key_commitment is malformed".into()))
+        })
+        .transpose()?;
     let wrapper = release::Identity::new(inner, fetch);
+    let committed = crypt::CommittedIdentity::new(&wrapper, expected);
     let file = BufReader::new(file);
-    let ids: Vec<Box<dyn age::Identity + '_>> = vec![Box::new(IdentityRef(&wrapper))];
-    let reader = crypt::decrypt_reader(file, &ids)?;
+    let ids: Vec<Box<dyn age::Identity + '_>> = vec![Box::new(IdentityRef(&committed))];
+    let reader = match crypt::decrypt_reader(file, &ids) {
+        Ok(r) => r,
+        Err(_) if committed.mismatched() => {
+            return Err(Error::Verify(
+                "file key does not match the signed manifest's key commitment".into(),
+            ));
+        }
+        Err(e) => return Err(e),
+    };
     progress.on(ProgressEvent::Extracting {
         path: req.out_dir.display().to_string(),
     });
@@ -265,8 +285,9 @@ pub fn open(
     })
 }
 
-/// Borrow the wrapper as an identity without moving it, so `last_unlock()` stays readable.
-struct IdentityRef<'a>(&'a release::Identity);
+/// Borrow the committed wrapper as an identity without moving it, so `mismatched()` and
+/// the inner `last_unlock()` stay readable after decryption.
+struct IdentityRef<'a>(&'a crypt::CommittedIdentity<'a>);
 
 impl age::Identity for IdentityRef<'_> {
     fn unwrap_stanza(
@@ -274,6 +295,13 @@ impl age::Identity for IdentityRef<'_> {
         stanza: &age_core::format::Stanza,
     ) -> Option<std::result::Result<age_core::format::FileKey, age::DecryptError>> {
         age::Identity::unwrap_stanza(self.0, stanza)
+    }
+
+    fn unwrap_stanzas(
+        &self,
+        stanzas: &[age_core::format::Stanza],
+    ) -> Option<std::result::Result<age_core::format::FileKey, age::DecryptError>> {
+        age::Identity::unwrap_stanzas(self.0, stanzas)
     }
 }
 
@@ -503,6 +531,7 @@ mod tests {
             assert_eq!(pass.words.len(), 6);
             assert_eq!(res.manifest_doc.recipients.len(), 1); // self omitted
             assert_eq!(res.manifest_doc.recipients[0].fingerprint, "");
+            assert!(res.manifest_doc.key_commitment.is_some());
             let mut rq = open_req(res.package.clone(), out.join("x"));
             rq.passphrase = Some(pass.as_secret());
             let opened = open(&ks, rq, Box::new(MemoryFetch::expired()), &NoProgress).unwrap();
@@ -538,6 +567,7 @@ mod tests {
         let rel = res.manifest_doc.release.as_ref().unwrap();
         assert_eq!(rel.window_secs, 90);
         assert_eq!(rel.service_key, "memory");
+        assert!(res.manifest_doc.key_commitment.is_some());
         // Timed release is a one-recipient wrap: self is not added implicitly.
         let p = crate::probe::probe(&res.package).unwrap();
         // age appends random `*-grease` stanzas to non-scrypt headers; the only real one is ours.
@@ -636,6 +666,7 @@ mod tests {
         });
         let res = seal(&ks, rq, &NoProgress).unwrap();
         assert_eq!(res.manifest_doc.recipients[0].kind, "scrypt");
+        assert!(res.manifest_doc.key_commitment.is_some());
         // The header alone cannot tell: the scrypt stanza is inside the release stanza.
         let p = crate::probe::probe(&res.package).unwrap();
         assert!(!p.needs_passphrase);
@@ -670,6 +701,96 @@ mod tests {
         let opened = open(&ks, rq, Box::new(fetch), &NoProgress).unwrap();
         assert_eq!(opened.extract.files, 2);
         assert!(opened.release.is_some());
+    }
+
+    #[test]
+    fn manifest_carries_a_commitment_and_a_wrong_one_is_refused_before_plaintext() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        let c = res.manifest_doc.key_commitment.clone().unwrap();
+        assert_eq!(c.len(), 64);
+        // Re-sign the manifest with a wrong commitment (same signer): verify passes, open refuses.
+        let (mpath, spath) = bundle_paths(&res.package);
+        let text = std::fs::read_to_string(&mpath)
+            .unwrap()
+            .replace(&c, &"0".repeat(64));
+        std::fs::write(&mpath, &text).unwrap();
+        let sig = crate::manifest::sign(
+            text.as_bytes(),
+            &ks.signing_key().unwrap(),
+            &ks.signing_public().unwrap(),
+            &res.manifest_doc.package_id,
+        )
+        .unwrap();
+        std::fs::write(&spath, sig.into_string()).unwrap();
+        assert!(verify(&ks, &res.package, None).is_ok());
+        let out = d.path().join("restored");
+        let err = open(
+            &ks,
+            open_req(res.package.clone(), out.clone()),
+            Box::new(MemoryFetch::expired()),
+            &NoProgress,
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::Verify(ref m) if m.contains("key commitment")),
+            "{err}"
+        );
+        assert!(!out.join("report").exists());
+        assert!(
+            !out.exists(),
+            "no output folder may be created on a commitment mismatch"
+        );
+        // Skipping verification skips the check too.
+        let mut r = open_req(res.package.clone(), out.clone());
+        r.skip_verify = true;
+        assert!(open(&ks, r, Box::new(MemoryFetch::expired()), &NoProgress).is_ok());
+    }
+
+    #[test]
+    fn manifest_without_commitment_still_opens() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        let (mpath, spath) = bundle_paths(&res.package);
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&mpath).unwrap()).unwrap();
+        v.as_object_mut().unwrap().remove("key_commitment");
+        let text = serde_json::to_vec_pretty(&v).unwrap();
+        std::fs::write(&mpath, &text).unwrap();
+        let sig = crate::manifest::sign(
+            &text,
+            &ks.signing_key().unwrap(),
+            &ks.signing_public().unwrap(),
+            &res.manifest_doc.package_id,
+        )
+        .unwrap();
+        std::fs::write(&spath, sig.into_string()).unwrap();
+        assert!(open(
+            &ks,
+            open_req(res.package, d.path().join("restored")),
+            Box::new(MemoryFetch::expired()),
+            &NoProgress
+        )
+        .is_ok());
     }
 
     fn fetch_set_token(f: &mut MemoryFetch, token: &str) {

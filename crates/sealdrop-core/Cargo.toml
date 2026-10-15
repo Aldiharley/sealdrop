@@ -30,6 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sha3 = "0.10"
+subtle = "2"
 tar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

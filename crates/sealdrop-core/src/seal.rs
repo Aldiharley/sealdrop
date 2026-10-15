@@ -270,10 +270,17 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
     };
 
     // Pack through the encryptor; `pack` hands the writer back so we can finish it.
-    let writer = crypt::encrypt_writer(file, &recipients, req.armor)?;
+    // `Committing` captures the file key age generates, for the manifest's key_commitment.
+    let committing = crypt::Committing::new(recipients);
+    let commitment = committing.handle();
+    let outer: Vec<Box<dyn age::Recipient + Send>> = vec![Box::new(committing)];
+    let writer = crypt::encrypt_writer(file, &outer, req.armor)?;
     let (pack_report, writer) = pack(&req.input, writer)?;
     let buf = writer.finish()?;
     buf.into_inner().map_err(|e| Error::Io(e.into_error()))?;
+    let key_commitment = commitment
+        .commitment_hex()
+        .ok_or_else(|| Error::Other("file key was not captured".into()))?;
     let (ct_sha, ct_size) = crate::hashing::sha256_file(&package)?;
     progress.on(ProgressEvent::Encrypted { bytes: ct_size });
 
@@ -326,6 +333,7 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
             sha256: ct_sha,
         },
         plaintext_tar_sha256: pack_report.tar_sha256.clone(),
+        key_commitment: Some(key_commitment),
         recipients: recipients_info,
         signer: store.signing_public_string()?,
         classification: req.classification.clone(),

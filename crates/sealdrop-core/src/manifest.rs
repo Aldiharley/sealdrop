@@ -39,6 +39,10 @@ pub struct Manifest {
     pub created: String,
     pub ciphertext: CiphertextInfo,
     pub plaintext_tar_sha256: String,
+    /// HKDF-SHA-256(file key, info "sealdrop/commit/v1"), hex. Absent in manifests from
+    /// sealdrop < 0.3; decoders check it when present (spec 5.4 step 7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_commitment: Option<String>,
     pub recipients: Vec<RecipientInfo>,
     pub signer: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,6 +107,7 @@ mod tests {
                 sha256: "ab".into(),
             },
             plaintext_tar_sha256: "cd".into(),
+            key_commitment: None,
             recipients: vec![RecipientInfo {
                 kind: "x25519".into(),
                 fingerprint: "0123456789abcdef".into(),

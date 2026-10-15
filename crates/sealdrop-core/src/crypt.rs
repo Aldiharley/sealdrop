@@ -1,14 +1,18 @@
 //! Thin wrapper over the `age` crate (spec 4.2, 5.1, 5.2). Nothing below the age
 //! format layer is implemented here.
 
-use std::collections::BTreeMap;
+use std::cell::Cell;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::io::{BufReader, Read, Write};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use age::armor::{ArmoredReader, ArmoredWriter, Format};
-use age::secrecy::SecretString;
+use age::secrecy::{ExposeSecret, SecretString};
 use age::stream::StreamWriter;
+use age_core::format::{FileKey, Stanza, FILE_KEY_BYTES};
+use zeroize::Zeroizing;
 
 use crate::hashing::sha256_hex;
 use crate::{Error, Result};
@@ -173,6 +177,158 @@ pub fn plugin_identities(lines: &[&str]) -> Result<Vec<Box<dyn age::Identity>>> 
         out.push(Box::new(p));
     }
     Ok(out)
+}
+
+/// HKDF info string of the manifest `key_commitment` (spec 5.2).
+pub const COMMIT_INFO: &[u8] = b"sealdrop/commit/v1";
+
+/// Spec 5.2 `key_commitment`: HKDF-SHA-256(ikm = file key, salt = empty, info = COMMIT_INFO).
+pub fn key_commitment(file_key: &FileKey) -> [u8; 32] {
+    age_core::primitives::hkdf(&[], COMMIT_INFO, file_key.expose_secret())
+}
+
+/// Parses a manifest `key_commitment`: exactly 64 lowercase hex characters.
+pub fn parse_commitment(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 || !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return None;
+    }
+    let v = hex::decode(s).ok()?;
+    v.try_into().ok()
+}
+
+type CapturedKey = Arc<Mutex<Option<Zeroizing<[u8; FILE_KEY_BYTES]>>>>;
+
+/// Read side of a [`Committing`] recipient: stays usable after the recipient itself has
+/// been moved into the encryptor's recipient list.
+#[derive(Clone)]
+pub struct CommitmentHandle(CapturedKey);
+
+impl CommitmentHandle {
+    /// The hex `key_commitment` of the captured file key; `None` until age has called
+    /// `wrap_file_key`.
+    pub fn commitment_hex(&self) -> Option<String> {
+        let g = self.0.lock().ok()?;
+        let fk = g.as_ref()?;
+        Some(hex::encode(age_core::primitives::hkdf(
+            &[],
+            COMMIT_INFO,
+            &fk[..],
+        )))
+    }
+}
+
+/// Wraps the outer recipient list so `seal` can learn the file key age generated.
+/// Replicates age's label rule, because age only sees this one recipient.
+pub struct Committing {
+    inner: Vec<Box<dyn age::Recipient + Send>>,
+    captured: CapturedKey,
+}
+
+impl Committing {
+    pub fn new(inner: Vec<Box<dyn age::Recipient + Send>>) -> Self {
+        Self {
+            inner,
+            captured: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// A shared reader of the captured key, to take before boxing this recipient.
+    pub fn handle(&self) -> CommitmentHandle {
+        CommitmentHandle(Arc::clone(&self.captured))
+    }
+
+    pub fn commitment_hex(&self) -> Option<String> {
+        self.handle().commitment_hex()
+    }
+}
+
+impl age::Recipient for Committing {
+    fn wrap_file_key(
+        &self,
+        file_key: &FileKey,
+    ) -> std::result::Result<(Vec<Stanza>, HashSet<String>), age::EncryptError> {
+        let mut stanzas = Vec::new();
+        let mut labels: Option<HashSet<String>> = None;
+        for r in &self.inner {
+            let (s, l) = r.wrap_file_key(file_key)?;
+            match &labels {
+                None => labels = Some(l),
+                Some(prev) if *prev != l => {
+                    return Err(age::EncryptError::IncompatibleRecipients {
+                        l_labels: prev.clone(),
+                        r_labels: l,
+                    })
+                }
+                Some(_) => {}
+            }
+            stanzas.extend(s);
+        }
+        if stanzas.is_empty() {
+            return Err(age::EncryptError::MissingRecipients);
+        }
+        let mut g = self.captured.lock().map_err(|_| {
+            age::EncryptError::Io(std::io::Error::other("file key capture lock poisoned"))
+        })?;
+        *g = Some(Zeroizing::new(*file_key.expose_secret()));
+        Ok((stanzas, labels.unwrap_or_default()))
+    }
+}
+
+/// Wraps the outer identity so `open` can refuse a file key that does not match the signed
+/// manifest's `key_commitment` before age ever derives a payload key.
+pub struct CommittedIdentity<'a> {
+    inner: &'a dyn age::Identity,
+    expected: Option<[u8; 32]>,
+    mismatch: Cell<bool>,
+}
+
+impl<'a> CommittedIdentity<'a> {
+    pub fn new(inner: &'a dyn age::Identity, expected: Option<[u8; 32]>) -> Self {
+        Self {
+            inner,
+            expected,
+            mismatch: Cell::new(false),
+        }
+    }
+
+    /// True once an unwrapped file key failed the commitment check.
+    pub fn mismatched(&self) -> bool {
+        self.mismatch.get()
+    }
+
+    fn check(
+        &self,
+        r: Option<std::result::Result<FileKey, age::DecryptError>>,
+    ) -> Option<std::result::Result<FileKey, age::DecryptError>> {
+        match (&self.expected, r) {
+            (Some(want), Some(Ok(fk))) => {
+                use subtle::ConstantTimeEq;
+                if key_commitment(&fk).ct_eq(want).into() {
+                    Some(Ok(fk))
+                } else {
+                    self.mismatch.set(true);
+                    Some(Err(age::DecryptError::InvalidHeader))
+                }
+            }
+            (_, r) => r,
+        }
+    }
+}
+
+impl age::Identity for CommittedIdentity<'_> {
+    fn unwrap_stanza(
+        &self,
+        stanza: &Stanza,
+    ) -> Option<std::result::Result<FileKey, age::DecryptError>> {
+        self.check(self.inner.unwrap_stanza(stanza))
+    }
+
+    fn unwrap_stanzas(
+        &self,
+        stanzas: &[Stanza],
+    ) -> Option<std::result::Result<FileKey, age::DecryptError>> {
+        self.check(self.inner.unwrap_stanzas(stanzas))
+    }
 }
 
 #[must_use = "call finish() or the file is truncated"]
@@ -459,6 +615,59 @@ mod tests {
             Err(Error::Other(m)) => assert!(m.contains("age-plugin-sealdroptest"), "{m}"),
             other => panic!("expected Error::Other, got ok={}", other.is_ok()),
         }
+    }
+
+    #[test]
+    fn committing_recipient_captures_the_file_key_and_checks_labels() {
+        use age_core::format::FileKey;
+        let id = age::x25519::Identity::generate();
+        let c = Committing::new(vec![Box::new(id.to_public())]);
+        assert!(c.commitment_hex().is_none());
+        let fk = FileKey::new(Box::new([9u8; 16]));
+        let (stanzas, labels) = age::Recipient::wrap_file_key(&c, &fk).unwrap();
+        assert_eq!(stanzas.len(), 1);
+        assert!(labels.is_empty());
+        assert_eq!(
+            c.commitment_hex().unwrap(),
+            hex::encode(key_commitment(&fk))
+        );
+        assert_eq!(
+            parse_commitment(&c.commitment_hex().unwrap()).unwrap(),
+            key_commitment(&fk)
+        );
+        assert!(parse_commitment("ABCD").is_none());
+        // Mixed label sets are refused, as age itself would.
+        let pq = crate::pq::Identity::generate();
+        let mixed = Committing::new(vec![Box::new(id.to_public()), Box::new(pq.to_public())]);
+        assert!(matches!(
+            age::Recipient::wrap_file_key(&mixed, &fk),
+            Err(age::EncryptError::IncompatibleRecipients { .. })
+        ));
+    }
+
+    #[test]
+    fn committed_identity_refuses_a_wrong_commitment() {
+        use age_core::format::FileKey;
+        let id = age::x25519::Identity::generate();
+        let fk = FileKey::new(Box::new([3u8; 16]));
+        let (stanzas, _) = age::Recipient::wrap_file_key(&id.to_public(), &fk).unwrap();
+        let good = CommittedIdentity::new(&id, Some(key_commitment(&fk)));
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&good, &stanzas[0]),
+            Some(Ok(_))
+        ));
+        assert!(!good.mismatched());
+        let bad = CommittedIdentity::new(&id, Some([0u8; 32]));
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&bad, &stanzas[0]),
+            Some(Err(_))
+        ));
+        assert!(bad.mismatched());
+        let unchecked = CommittedIdentity::new(&id, None);
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&unchecked, &stanzas[0]),
+            Some(Ok(_))
+        ));
     }
 
     #[test]
