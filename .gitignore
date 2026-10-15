@@ -55,3 +55,4 @@ desktop.ini
 # deep-research working folders (reports are copied into docs/research when kept)
 research_notes/
 reports/
+/apps/desktop/.test-dist/

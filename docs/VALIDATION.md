@@ -189,7 +189,7 @@ dist/assets/index-DHVYEJIU.js                               341.12 kB │ gzip: 
 ✓ built in 235ms
 ```
 
-`npm test` bundles `src/lib/format.pq.test.ts` with rolldown and runs it on Node's built-in test runner (Node 20.18.0). `npm run build` is `tsc --noEmit && vite build`. The `rolldown` native binding workaround from 0.2 was already in `node_modules`, and `package.json` and the lockfile were not changed by running these (the version lines were edited by hand). The Rust side of the desktop app (19 unit tests, clippy) is in the tables above.
+`npm test` bundles `src/lib/format.pq.test.ts` with rolldown into `.test-dist/` (git-ignored; it must sit outside `node_modules`, which Node 22's test runner excludes from path matching) and runs it on Node's built-in test runner (Node 20.18.0 here, Node 22 in CI). `npm run build` is `tsc --noEmit && vite build`. The `rolldown` native binding workaround from 0.2 was already in `node_modules`, and `package.json` and the lockfile were not changed by running these (the version lines were edited by hand). The Rust side of the desktop app (19 unit tests, clippy) is in the tables above.
 
 ## RNG audit
 
