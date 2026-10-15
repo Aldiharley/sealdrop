@@ -17,6 +17,19 @@ fn age_available() -> bool {
     ok
 }
 
+/// Same contract as `age_available`, for the reference `age-keygen` binary.
+fn age_keygen_available() -> bool {
+    let ok = Command::new("age-keygen")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !ok && std::env::var("SEALDROP_REQUIRE_AGE").as_deref() == Ok("1") {
+        panic!("SEALDROP_REQUIRE_AGE=1 but the reference `age-keygen` binary is not on PATH");
+    }
+    ok
+}
+
 fn age_on_path() -> bool {
     Command::new("age")
         .arg("--version")
@@ -241,23 +254,24 @@ fn stock_age_decrypts_pq_recipient_package() {
     );
     let (sha, _) = sealdrop_core::hashing::sha256_file(&tar).unwrap();
     assert_eq!(sha, res.pack.tar_sha256);
-    // age-keygen (when present) derives the same recipient from our identity file.
-    if Command::new("age-keygen")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
+    // age-keygen derives the same recipient from our identity file.
+    if age_keygen_available() {
         let y = Command::new("age-keygen")
             .arg("-y")
             .arg(ks.dir().join("identity.txt"))
             .output()
             .unwrap();
-        assert!(y.status.success());
+        assert!(
+            y.status.success(),
+            "age-keygen -y failed: {}",
+            String::from_utf8_lossy(&y.stderr)
+        );
         assert_eq!(
             String::from_utf8_lossy(&y.stdout).trim(),
             ks.recipient_string().unwrap()
         );
+    } else {
+        eprintln!("skipping recipient check: age-keygen not installed");
     }
 }
 

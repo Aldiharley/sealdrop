@@ -208,8 +208,9 @@ pub fn open(
         let mut have_secret = true;
         match store.native_identities() {
             Ok(ids) => inner.extend(ids),
-            // Plugin-only identity files have no native secret key line.
-            Err(Error::InvalidIdentity) => have_secret = false,
+            // Plugin-only identity files have no native secret key line. A native line
+            // that is present but does not parse is an error, never skipped.
+            Err(Error::InvalidIdentity) if !store.has_native_line()? => have_secret = false,
             Err(e) => return Err(e),
         }
         let lines = store.plugin_identity_lines()?;
@@ -960,6 +961,40 @@ mod tests {
             &NoProgress,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn corrupt_native_line_next_to_plugin_line_is_an_error() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        // A well-formed plugin identity (its plugin is not installed) beside a native
+        // line that does not parse: the broken native line must not be skipped.
+        let plugin = bech32::encode::<bech32::Bech32>(
+            bech32::Hrp::parse("age-plugin-sealdroptest-").unwrap(),
+            &[1u8; 32],
+        )
+        .unwrap()
+        .to_uppercase();
+        std::fs::write(
+            ks.dir().join("identity.txt"),
+            format!("AGE-SECRET-KEY-PQ-1QQQQQQQQ\n{plugin}\n"),
+        )
+        .unwrap();
+        let mut rq = open_req(res.package, d.path().join("r"));
+        rq.skip_verify = true;
+        let err = open(&ks, rq, Box::new(MemoryFetch::expired()), &NoProgress)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::InvalidIdentity), "{err}");
     }
 
     #[test]

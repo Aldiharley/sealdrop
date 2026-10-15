@@ -28,12 +28,22 @@ fn redact(s: &str) -> String {
     }
 }
 
-/// `Hybrid` is large (ML-KEM public key); kept unboxed to match the module interface.
+/// HRP of age's native post-quantum recipients.
+const PQ_RECIPIENT_HRP: &str = "age1pq";
+
+/// The Bech32 human-readable part (the text before the last `1`), lowercased.
+fn bech32_hrp(s: &str) -> Option<String> {
+    s.rfind('1').map(|i| s[..i].to_ascii_lowercase())
+}
+
+/// `Pq` and `Hybrid` are large (both hold an ML-KEM public key); kept unboxed to match
+/// the module interface.
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Recipient {
     X25519(age::x25519::Recipient),
-    /// age's native hybrid type (`age1pq1…`, ML-KEM-768 + X25519).
+    /// age 1.3's native post-quantum type (`age1pq1…`, ML-KEM-768 + X25519); `Hybrid`
+    /// below is the tagged P-256 variant.
     Pq(crate::pq::Recipient),
     Hybrid(age::tagpq::Recipient),
     Plugin(age::plugin::Recipient),
@@ -45,9 +55,14 @@ impl Recipient {
         if let Ok(r) = age::x25519::Recipient::from_str(s) {
             return Ok(Self::X25519(r));
         }
-        // Before the plugin fallback: `age1pq1…` would otherwise parse as plugin `pq`.
-        if let Ok(r) = crate::pq::Recipient::from_str(s) {
-            return Ok(Self::Pq(r));
+        // `age1pq1…` is always the native PQ type. A malformed one is an error: falling
+        // through would parse it as plugin `pq` and run any `age-plugin-pq` on PATH.
+        match crate::pq::Recipient::from_str(s) {
+            Ok(r) => return Ok(Self::Pq(r)),
+            Err(_) if bech32_hrp(s).as_deref() == Some(PQ_RECIPIENT_HRP) => {
+                return Err(Error::InvalidRecipient(redact(s)));
+            }
+            Err(_) => {}
         }
         if let Ok(r) = age::tagpq::Recipient::from_str(s) {
             return Ok(Self::Hybrid(r));
@@ -275,6 +290,30 @@ mod tests {
         assert_eq!(r.plugin_name(), None);
         assert_eq!(r.to_string(), s);
         assert_eq!(r.fingerprint().len(), 16);
+    }
+
+    #[test]
+    fn malformed_pq_recipient_is_an_error_not_a_plugin() {
+        let hrp = bech32::Hrp::parse("age1pq").unwrap();
+        // Checksum-valid, but a 32-byte payload instead of 1216.
+        let short = age_core::primitives::bech32_encode(hrp, &[7u8; 32]);
+        // A real recipient with its X25519 half zeroed (low order).
+        let good = crate::pq::Identity::generate().to_public().to_string();
+        let mut bytes: Vec<u8> =
+            age_core::primitives::bech32_decode(&good, |_| (), |_| Ok(()), |_, b| Ok(b.collect()))
+                .unwrap();
+        let n = bytes.len();
+        bytes[n - 32..].fill(0);
+        let low_order = age_core::primitives::bech32_encode(hrp, &bytes);
+        for s in [short.clone(), short.to_uppercase(), low_order] {
+            match Recipient::parse(&s) {
+                Err(Error::InvalidRecipient(_)) => {}
+                other => panic!(
+                    "expected InvalidRecipient, got {:?}",
+                    other.map(|r| r.kind())
+                ),
+            }
+        }
     }
 
     #[test]

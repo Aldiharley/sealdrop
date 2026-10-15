@@ -267,15 +267,36 @@ impl KeyStore {
             .collect())
     }
 
-    /// The native identity type in the identity file.
+    /// Whether the identity file has a native secret line (`AGE-SECRET-KEY-…`, either
+    /// kind), parseable or not. Tells a plugin-only file apart from a corrupt native line.
+    pub fn has_native_line(&self) -> Result<bool> {
+        Ok(self
+            .identity_lines()?
+            .iter()
+            .any(|l| l.starts_with("AGE-SECRET-KEY-")))
+    }
+
+    /// The native identity type in the identity file. The file must hold exactly one
+    /// native secret line; two (of either kind) is a `KeyStore` error, none is
+    /// `InvalidIdentity`.
     pub fn identity_kind(&self) -> Result<IdentityKind> {
         let lines = self.identity_lines()?;
-        if lines.iter().any(|l| l.starts_with("AGE-SECRET-KEY-PQ-1")) {
-            Ok(IdentityKind::Pq)
-        } else if lines.iter().any(|l| l.starts_with("AGE-SECRET-KEY-1")) {
-            Ok(IdentityKind::X25519)
-        } else {
-            Err(Error::InvalidIdentity)
+        let pq = lines
+            .iter()
+            .filter(|l| l.starts_with("AGE-SECRET-KEY-PQ-1"))
+            .count();
+        let x25519 = lines
+            .iter()
+            .filter(|l| l.starts_with("AGE-SECRET-KEY-1"))
+            .count();
+        match (x25519, pq) {
+            (0, 0) => Err(Error::InvalidIdentity),
+            (1, 0) => Ok(IdentityKind::X25519),
+            (0, 1) => Ok(IdentityKind::Pq),
+            _ => Err(Error::KeyStore(
+                "identity.txt holds more than one native identity; keep exactly one AGE-SECRET-KEY line"
+                    .into(),
+            )),
         }
     }
 
@@ -288,7 +309,7 @@ impl KeyStore {
         crate::pq::Identity::from_str(line).map_err(|_| Error::InvalidIdentity)
     }
 
-    /// Every native (non-plugin) identity in the file, boxed for age.
+    /// The file's one native (non-plugin) identity, boxed for age.
     pub fn native_identities(&self) -> Result<Vec<Box<dyn age::Identity>>> {
         match self.identity_kind()? {
             IdentityKind::X25519 => Ok(vec![Box::new(self.identity()?)]),
@@ -437,6 +458,26 @@ mod tests {
         assert_eq!(info2.kind, IdentityKind::X25519);
         assert_eq!(ks2.identity_kind().unwrap(), IdentityKind::X25519);
         assert_eq!(ks2.native_identities().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn two_native_identity_lines_are_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let ks = KeyStore::open(d.path().join("store"));
+        ks.generate(false, IdentityKind::Pq).unwrap();
+        assert!(ks.has_native_line().unwrap());
+        let path = ks.dir().join("identity.txt");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        let x = age::x25519::Identity::generate();
+        text.push_str(x.to_string().expose_secret());
+        text.push('\n');
+        std::fs::write(&path, text).unwrap();
+        assert!(matches!(ks.identity_kind(), Err(Error::KeyStore(_))));
+        assert!(matches!(ks.native_identities(), Err(Error::KeyStore(_))));
+        assert!(matches!(ks.recipient_string(), Err(Error::KeyStore(_))));
+        // A plugin-only file has no native line.
+        std::fs::write(&path, "# plugin only\nAGE-PLUGIN-X-1QQQQ\n").unwrap();
+        assert!(!ks.has_native_line().unwrap());
     }
 
     #[test]
