@@ -121,11 +121,11 @@ impl FromStr for Identity {
     type Err = &'static str;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = Zeroizing::new(decode_bech32(s.trim(), IDENTITY_HRP)?);
-        let seed: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| "invalid identity")?;
-        let seed = Zeroizing::new(seed);
+        if bytes.len() != 32 {
+            return Err("invalid identity");
+        }
+        let mut seed = Zeroizing::new([0u8; 32]);
+        seed.copy_from_slice(&bytes);
         let sk = kem::PrivateKey::from_bytes(&*seed).map_err(|_| "invalid identity")?;
         Ok(Self { seed, sk })
     }
@@ -225,6 +225,10 @@ mod tests {
         assert!(Recipient::from_str(&r.to_uppercase()).is_ok());
         assert!(Recipient::from_str("age1pq1notvalid").is_err());
         assert!(Identity::from_str("AGE-SECRET-KEY-1QQQ").is_err());
+        // Valid Bech32 with another type's HRP is rejected.
+        let x = age::x25519::Identity::generate();
+        assert!(Identity::from_str(x.to_string().expose_secret()).is_err());
+        assert!(Recipient::from_str(&x.to_public().to_string()).is_err());
         // Mixed case is invalid Bech32.
         let mixed = format!("{}{}", &s[..30], s[30..].to_lowercase());
         assert!(Identity::from_str(&mixed).is_err());
@@ -291,6 +295,12 @@ mod tests {
         let mut s = stanza_for(&id);
         s.args[0].push('=');
         assert!(is_header_failure(age::Identity::unwrap_stanza(&id, &s)));
+        let mut s = stanza_for(&id);
+        const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let last = s.args[0].pop().unwrap() as u8;
+        let i = B64.iter().position(|&c| c == last).unwrap();
+        s.args[0].push(B64[i ^ 1] as char);
+        assert!(is_header_failure(age::Identity::unwrap_stanza(&id, &s)));
         // Body not 32 bytes: header failure, before any decryption.
         let mut s = stanza_for(&id);
         s.body.push(0);
@@ -307,6 +317,16 @@ mod tests {
         }
         s.args[0] = BASE64_STANDARD_NO_PAD.encode(&enc);
         assert!(is_header_failure(age::Identity::unwrap_stanza(&id, &s)));
+    }
+
+    #[test]
+    fn recipient_with_low_order_x25519_key_does_not_parse() {
+        let mut bytes = Identity::generate().to_public().0.to_bytes().to_vec();
+        for b in &mut bytes[PK_LEN - 32..] {
+            *b = 0;
+        }
+        let s = bech32_encode(hrp(RECIPIENT_HRP), &bytes);
+        assert_eq!(Recipient::from_str(&s), Err("invalid recipient"));
     }
 
     #[test]

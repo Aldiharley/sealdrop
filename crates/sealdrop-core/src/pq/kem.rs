@@ -119,6 +119,15 @@ impl Deserializable for PublicKey {
             return Err(HpkeError::ValidationError);
         }
         let pk_x = XPublic::from(<[u8; 32]>::try_from(x).expect("correct length"));
+        // Refuse a low-order X25519 key here, so encap (and age-core's `hpke_seal`, which
+        // expects success) never sees one. Clamping makes any fixed non-zero scalar a
+        // multiple of the cofactor, so the trial DH is all-zero exactly for low-order points.
+        if !StaticSecret::from([1u8; 32])
+            .diffie_hellman(&pk_x)
+            .was_contributory()
+        {
+            return Err(HpkeError::ValidationError);
+        }
         Ok(Self { ek_pq, pk_x })
     }
 }
@@ -324,14 +333,19 @@ mod tests {
     }
 
     #[test]
-    fn all_zero_x25519_public_key_fails_encap() {
+    fn low_order_x25519_public_key_is_rejected() {
         let (_, pk) = MlKem768X25519::gen_keypair(&mut OsRng);
         let mut bytes = pk.to_bytes().to_vec();
-        // pk_x is the last 32 bytes; the all-zero point gives a non-contributory secret.
+        // pk_x is the last 32 bytes; the all-zero point is low order.
         for b in &mut bytes[1184..] {
             *b = 0;
         }
-        let bad = PublicKey::from_bytes(&bytes).unwrap();
+        assert!(PublicKey::from_bytes(&bytes).is_err());
+        // Defence in depth: encap refuses such a key even if one is built directly.
+        let bad = PublicKey {
+            ek_pq: pk.ek_pq.clone(),
+            pk_x: XPublic::from([0u8; 32]),
+        };
         assert!(MlKem768X25519::encap(&bad, None, &mut OsRng).is_err());
     }
 
