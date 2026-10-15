@@ -62,6 +62,8 @@ pub enum ExtractError {
     DuplicatePath(String),
     #[error("tar extension header of {0} bytes exceeds the limit")]
     HeaderTooLarge(u64),
+    #[error("paths {0} and {1} differ only in letter case")]
+    CaseCollision(String, String),
 }
 
 #[derive(Debug, Clone)]
@@ -271,6 +273,78 @@ fn unwrap_io(e: io::Error) -> Error {
     }
 }
 
+/// Directory components and full paths that collide under Unicode case folding
+/// (uppercase, then lowercase, so `ς`/`σ`/`Σ` and `ϐ`/`β` fold together). Returns the
+/// first colliding pair as the full paths (earlier, later) that introduced the two
+/// spellings. Directories count: `r/sub/x` and `r/SUB/y` collide on the folder.
+///
+/// A lower bound: NTFS and APFS fold slightly more (and APFS is also
+/// normalisation-insensitive). Such collisions are not refused here, and the per-file hash
+/// check does not catch them (each file matches its own hash as written).
+pub fn case_collision<'a>(paths: impl Iterator<Item = &'a str>) -> Option<(String, String)> {
+    // folded prefix -> (prefix as spelled, full path that introduced it)
+    let mut seen: HashMap<String, (String, String)> = HashMap::new();
+    for p in paths {
+        let comps: Vec<&str> = p.split('/').collect();
+        for i in 1..=comps.len() {
+            let prefix = comps[..i].join("/");
+            let folded = prefix.to_uppercase().to_lowercase();
+            match seen.get(&folded) {
+                Some((spelled, first)) if *spelled != prefix => {
+                    return Some((first.clone(), p.to_string()))
+                }
+                Some(_) => {}
+                None => {
+                    seen.insert(folded, (prefix, p.to_string()));
+                }
+            }
+        }
+    }
+    None
+}
+
+const CASE_PROBE_PREFIX: &str = ".sealdrop-case-probe-";
+
+/// Creates a uniquely named probe file `.sealdrop-case-probe-<random>` in `dir` and asks
+/// whether the same name with the case of its random letters swapped exists. The name is
+/// unpredictable, so a file planted in `dir` cannot steer the answer. Any error (the probe
+/// cannot be created, or three random suffixes had no ASCII letter) is reported as
+/// case-insensitive: fail closed, so colliding packages are refused. The probe file is
+/// removed when it goes out of scope.
+pub fn destination_is_case_insensitive(dir: &Path) -> bool {
+    for _ in 0..3 {
+        let Ok(probe) = tempfile::Builder::new()
+            .prefix(CASE_PROBE_PREFIX)
+            .tempfile_in(dir)
+        else {
+            return true;
+        };
+        let Some(suffix) = probe
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix(CASE_PROBE_PREFIX))
+        else {
+            return true;
+        };
+        if !suffix.bytes().any(|b| b.is_ascii_alphabetic()) {
+            continue;
+        }
+        let swapped: String = suffix
+            .chars()
+            .map(|c| {
+                if c.is_ascii_lowercase() {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        return fs::symlink_metadata(dir.join(format!("{CASE_PROBE_PREFIX}{swapped}"))).is_ok();
+    }
+    true
+}
+
 /// Extracts a sealdrop tar stream into `out_dir/<root>`, verifying every file hash.
 pub fn extract<R: Read>(
     r: R,
@@ -323,8 +397,16 @@ pub fn extract<R: Read>(
         }
     }
 
-    // 2. Temp dir inside out_dir so the final rename is atomic on the same volume.
+    // 2. Refuse paths that would overwrite each other on a case-insensitive destination,
+    // before anything is written. The probe needs `out_dir` to exist.
     fs::create_dir_all(out_dir)?;
+    if destination_is_case_insensitive(out_dir) {
+        if let Some((a, b)) = case_collision(meta.files.iter().map(|f| f.path.as_str())) {
+            return Err(ExtractError::CaseCollision(a, b).into());
+        }
+    }
+
+    // 3. Temp dir inside out_dir so the final rename is atomic on the same volume.
     let final_path = out_dir.join(&meta.root);
     // `symlink_metadata`: a dangling or any other symlink at the target also counts.
     if fs::symlink_metadata(&final_path).is_ok() && !overwrite {
@@ -459,6 +541,134 @@ fn replace(target: &Path, staged: &Path, tmp: tempfile::TempDir) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds a sealdrop tar by hand: `meta.json` first, then each file under the payload
+    /// prefix. Paths are relative to the payload prefix; the root is the first component.
+    pub(crate) fn build_tar(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let root = files[0].0.split('/').next().unwrap();
+        let listed: Vec<serde_json::Value> = files
+            .iter()
+            .map(|(p, data)| {
+                serde_json::json!({
+                    "path": p,
+                    "size": data.len(),
+                    "sha256": crate::hashing::sha256_hex(data),
+                })
+            })
+            .collect();
+        let meta = serde_json::to_vec(&serde_json::json!({
+            "format": "sealdrop/1", "tool": "test", "created": "2026-01-01T00:00:00Z",
+            "root": root, "files": listed,
+        }))
+        .unwrap();
+        let mut out = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut out);
+            let mut add = |path: &str, data: &[u8]| {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(data.len() as u64);
+                h.set_mode(0o644);
+                h.set_entry_type(tar::EntryType::Regular);
+                b.append_data(&mut h, path, data).unwrap();
+            };
+            add(META_PATH, &meta);
+            for (p, data) in files {
+                add(&format!("{PAYLOAD_PREFIX}{p}"), data);
+            }
+            b.finish().unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn case_collision_detector() {
+        assert_eq!(case_collision(["r/a.txt", "r/b.txt"].into_iter()), None);
+        assert_eq!(
+            case_collision(["r/a.txt", "r/Sub/x", "r/A.TXT"].into_iter()),
+            Some(("r/a.txt".into(), "r/A.TXT".into()))
+        );
+        assert_eq!(
+            case_collision(["r/sub/x", "r/SUB/y"].into_iter()),
+            Some(("r/sub/x".into(), "r/SUB/y".into()))
+        );
+        // Unicode: Straße vs STRASSE do not collide under simple folding; ä vs Ä do.
+        assert!(case_collision(["r/ä", "r/Ä"].into_iter()).is_some());
+        // Uppercase-then-lowercase folding: final and medial sigma, and the beta variant.
+        assert!(case_collision(["r/ας", "r/ασ"].into_iter()).is_some());
+        assert!(case_collision(["r/ς", "r/Σ"].into_iter()).is_some());
+        assert!(case_collision(["r/ϐ", "r/β"].into_iter()).is_some());
+    }
+
+    #[test]
+    fn probe_ignores_planted_fixed_name_probe_files() {
+        let d = tempfile::tempdir().unwrap();
+        // The pre-0.3 fixed probe names, planted to steer the answer.
+        std::fs::write(d.path().join(".sealdrop-case-probe-a"), b"").unwrap();
+        if !cfg!(windows) {
+            std::fs::write(d.path().join(".sealdrop-case-probe-A"), b"").unwrap();
+        }
+        let ci = destination_is_case_insensitive(d.path());
+        if cfg!(windows) {
+            assert!(ci);
+        }
+        if cfg!(target_os = "linux") {
+            assert!(!ci);
+        }
+        // Only the planted files remain.
+        let left = std::fs::read_dir(d.path()).unwrap().count();
+        assert_eq!(left, if cfg!(windows) { 1 } else { 2 });
+        // A colliding package is still refused where the destination folds case.
+        let tar = build_tar(&[("r/a.txt", b"1"), ("r/A.txt", b"2")]);
+        let r = extract(&tar[..], d.path(), &Limits::default(), false);
+        if cfg!(windows) {
+            assert!(
+                matches!(r, Err(Error::Extract(ExtractError::CaseCollision(_, _)))),
+                "{r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn probe_fails_closed_when_it_cannot_create_its_file() {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join("plain-file");
+        std::fs::write(&file, b"x").unwrap();
+        // A path under a regular file cannot hold a probe; neither can a missing folder.
+        assert!(destination_is_case_insensitive(&file.join("sub")));
+        assert!(destination_is_case_insensitive(&d.path().join("missing")));
+    }
+
+    #[test]
+    fn probe_reports_the_platform_and_cleans_up() {
+        let d = tempfile::tempdir().unwrap();
+        let ci = destination_is_case_insensitive(d.path());
+        // Windows temp folders are case-insensitive; Linux CI runners are case-sensitive.
+        if cfg!(windows) {
+            assert!(ci);
+        }
+        if cfg!(target_os = "linux") {
+            assert!(!ci);
+        }
+        // Probe files are cleaned up.
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn colliding_package_is_refused_on_case_insensitive_destinations() {
+        // A tar with r/a.txt and r/A.txt (built directly, as malicious_tar.rs does).
+        let tar = build_tar(&[("r/a.txt", b"1"), ("r/A.txt", b"2")]);
+        let d = tempfile::tempdir().unwrap();
+        let r = extract(&tar[..], d.path(), &Limits::default(), false);
+        if destination_is_case_insensitive(d.path()) {
+            assert!(
+                matches!(r, Err(Error::Extract(ExtractError::CaseCollision(_, _)))),
+                "{r:?}"
+            );
+            assert!(!d.path().join("r").exists());
+        } else {
+            assert!(r.is_ok());
+        }
+    }
 
     #[test]
     fn overwrite_replaces_the_tree_and_leaves_no_parked_copy() {

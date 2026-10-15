@@ -47,6 +47,10 @@ enum Cmd {
         /// Replace an existing identity (the old keys are lost)
         #[arg(long)]
         force: bool,
+        /// Create a post-quantum identity (age1pq1…, ML-KEM-768 + X25519). Senders need
+        /// sealdrop 0.3+ or age 1.3+; the recipient string is about 2 000 characters.
+        #[arg(long)]
+        pq: bool,
     },
     /// Print your public recipient string and signer key
     Recipient,
@@ -142,8 +146,25 @@ fn message_for(e: &anyhow::Error) -> String {
         Some(Error::ReleaseExpired) => {
             "this package has expired at the release service and can no longer be opened".into()
         }
-        _ => format!("{e:#}"),
+        _ => chain_message(e),
     }
+}
+
+/// `{e:#}`, except that a link whose text the previous link already ends with is dropped:
+/// `Error::Policy` prints its cause and also exposes it as the source, which would repeat
+/// the sentence ("policy refused: X: X").
+fn chain_message(e: &anyhow::Error) -> String {
+    let mut msg = String::new();
+    for link in e.chain() {
+        let text = link.to_string();
+        if msg.is_empty() {
+            msg = text;
+        } else if !msg.ends_with(&text) {
+            msg.push_str(": ");
+            msg.push_str(&text);
+        }
+    }
+    msg
 }
 
 fn main() -> ExitCode {
@@ -161,7 +182,7 @@ fn main() -> ExitCode {
         }
     };
     let r = match cli.cmd {
-        Cmd::Keygen { force } => commands::keygen::run(force),
+        Cmd::Keygen { force, pq } => commands::keygen::run(force, pq),
         Cmd::Recipient => commands::recipient::run(),
         Cmd::Seal(a) => commands::seal::run(a),
         Cmd::Verify(a) => commands::verify::run(a),
@@ -235,6 +256,19 @@ mod tests {
         let mut buf = Vec::new();
         write_line(&mut buf, format_args!("a {}", 1)).unwrap();
         assert_eq!(buf, b"a 1\n");
+    }
+
+    #[test]
+    fn policy_message_is_not_repeated() {
+        use sealdrop_core::policy::PolicyError;
+        let e = anyhow::Error::new(Error::Policy(PolicyError::PqMustNotMix {
+            classical: vec!["abc".into()],
+        }));
+        let m = message_for(&e);
+        assert_eq!(m.matches("cannot be mixed").count(), 1, "{m}");
+        assert!(m.starts_with("policy refused: "), "{m}");
+        let ctx = anyhow::Error::new(Error::Policy(PolicyError::NoRecipients)).context("hint");
+        assert!(message_for(&ctx).starts_with("hint: policy refused: "));
     }
 
     #[test]

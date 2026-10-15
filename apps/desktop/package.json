@@ -1,6 +1,6 @@
 {
   "name": "sealdrop-desktop",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "sealdrop desktop app",
@@ -12,6 +12,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "test": "rolldown src/lib/format.pq.test.ts --platform node --format esm --file node_modules/.cache/sealdrop-test/format.pq.test.mjs && node --test node_modules/.cache/sealdrop-test/format.pq.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

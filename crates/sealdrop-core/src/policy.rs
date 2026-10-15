@@ -14,6 +14,13 @@ pub enum PolicyError {
     HardwareOnlyNeedsRecovery,
     #[error("plugin `{0}` is not on the allow-list")]
     PluginNotAllowed(String),
+    #[error("post-quantum recipients cannot be mixed with classical ones (classical: {}); seal them separately", .classical.join(", "))]
+    PqMustNotMix { classical: Vec<String> },
+}
+
+/// Manifest kinds whose key wrap resists a quantum adversary.
+pub fn is_post_quantum_kind(kind: &str) -> bool {
+    kind == "pq" || kind == "hybrid-pq"
 }
 
 pub fn plugin_allowed(name: &str) -> bool {
@@ -40,6 +47,16 @@ pub fn check_recipients(
             if !plugin_allowed(&name) {
                 return Err(PolicyError::PluginNotAllowed(name));
             }
+        }
+    }
+    if recipients.iter().any(|r| is_post_quantum_kind(&r.kind())) {
+        let classical: Vec<String> = recipients
+            .iter()
+            .filter(|r| !is_post_quantum_kind(&r.kind()))
+            .map(|r| r.fingerprint())
+            .collect();
+        if !classical.is_empty() {
+            return Err(PolicyError::PqMustNotMix { classical });
         }
     }
     let all_hardware = recipients.iter().all(|r| r.plugin_name().is_some());
@@ -88,5 +105,27 @@ mod tests {
             Err(PolicyError::PluginNotAllowed("evil".into()))
         );
         assert!(plugin_allowed("tpm") && !plugin_allowed("foo"));
+    }
+
+    fn pq() -> Recipient {
+        Recipient::parse(&crate::pq::Identity::generate().to_public().to_string()).unwrap()
+    }
+
+    #[test]
+    fn pq_must_not_mix() {
+        assert_eq!(check_recipients(&[pq(), pq()], false, false), Ok(()));
+        let x = x();
+        match check_recipients(&[pq(), x.clone()], false, false) {
+            Err(PolicyError::PqMustNotMix { classical }) => {
+                assert_eq!(classical, vec![x.fingerprint()])
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            check_recipients(&[pq(), plugin("yubikey")], false, true),
+            Err(PolicyError::PqMustNotMix { .. })
+        ));
+        assert!(is_post_quantum_kind("pq") && is_post_quantum_kind("hybrid-pq"));
+        assert!(!is_post_quantum_kind("x25519") && !is_post_quantum_kind("plugin:pq"));
     }
 }

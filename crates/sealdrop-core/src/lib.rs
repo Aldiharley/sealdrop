@@ -12,6 +12,7 @@ pub mod open;
 pub mod pack;
 pub mod passphrase;
 pub mod policy;
+pub mod pq;
 pub mod probe;
 pub mod progress;
 pub mod release;

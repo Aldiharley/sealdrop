@@ -15,25 +15,31 @@ age.workspace = true
 age-core.workspace = true
 argon2.workspace = true
 base64.workspace = true
+bech32 = "0.11"
 chacha20poly1305.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 hex.workspace = true
+hpke = { version = "0.12", default-features = false, features = ["alloc"] }
 minisign.workspace = true
+ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
 rand.workspace = true
+rand_core06 = { package = "rand_core", version = "0.6", features = ["getrandom"] }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sha3 = "0.10"
+subtle = "2"
 tar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 flate2 = "1"
-bech32 = "0.11"

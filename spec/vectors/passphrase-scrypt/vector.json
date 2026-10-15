@@ -14,8 +14,8 @@
         "size": 256
       }
     ],
-    "package_id": "6e168d90-9c5c-4974-a670-129835f4ecbd",
-    "plaintext_tar_sha256": "aeb310d19c80a850a462ba3a4121f6ef1997de92cab5ce39f9f66e0c493344b8"
+    "package_id": "643a55ae-a48b-4847-a52b-34afaf909f67",
+    "plaintext_tar_sha256": "cfa28f61cdb818ea09cff855dcc892425dceb9f679d53c40dd0ead4029202d2b"
   },
   "files": {
     "manifest": "report.manifest.json",
@@ -23,7 +23,7 @@
     "signature": "report.manifest.json.minisig"
   },
   "inputs": {
-    "passphrase": "headroom siding sitcom caviar earache livestock",
+    "passphrase": "stimulus helpful poking marigold washroom cruelty",
     "signer_key": "RWTXDZtJrnjtYEAtV/C6Jh0hZq1NsdXZCKKGp7bXzoxGrdbejnivqfCW"
   },
   "name": "passphrase-scrypt",

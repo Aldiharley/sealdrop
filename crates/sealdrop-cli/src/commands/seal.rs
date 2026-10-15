@@ -31,7 +31,7 @@ pub enum KdfProfile {
 pub struct Args {
     /// File or folder to seal
     pub input: PathBuf,
-    /// Recipient (age1..., age1tagpq1... hybrid post-quantum, or age1<plugin>1...). Repeatable.
+    /// Recipient (age1..., age1pq1... post-quantum, age1tagpq1... hybrid post-quantum encrypt-only, or age1<plugin>1...). Repeatable. Post-quantum and classical recipients cannot be mixed in one package.
     #[arg(short = 'r', long = "recipient")]
     pub recipients: Vec<String>,
     /// Generate a passphrase instead of using recipients (it is printed once, to stdout)
@@ -205,6 +205,17 @@ pub fn run(a: Args) -> anyhow::Result<()> {
     out!("manifest: {}", res.manifest.display());
     out!("signature: {}", res.signature.display());
     out!("package id: {}", res.manifest_doc.package_id);
+    out!(
+        "post-quantum: {}",
+        if sealdrop_core::open::post_quantum_kinds(&res.manifest_doc.recipients) {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    if let Some(note) = &res.self_omitted {
+        eprintln!("note: {note}");
+    }
     out!("ciphertext sha256: {}", res.manifest_doc.ciphertext.sha256);
     if let Some(r) = &res.manifest_doc.release {
         out!(

@@ -25,6 +25,8 @@ pub struct Probe {
     pub tags: Vec<String>,
     pub needs_passphrase: bool,
     pub release: Option<ReleaseArgs>,
+    /// True when every real stanza is a post-quantum one.
+    pub post_quantum: bool,
 }
 
 /// Read at most `HEADER_MAX + 1` bytes of `path` and probe them.
@@ -107,11 +109,16 @@ pub fn probe_bytes(buf: &[u8]) -> Result<Probe> {
     let needs_passphrase = tags
         .iter()
         .any(|t| t == "scrypt" || t == crate::argon2id::TAG);
+    // Grease stanzas (`*-grease`) are not real stanzas. A release stanza hides its inner
+    // kinds, so a timed package is only known from its manifest (see `open::verify`).
+    let real: Vec<&String> = tags.iter().filter(|t| !t.ends_with("-grease")).collect();
+    let post_quantum = !real.is_empty() && real.iter().all(|t| crate::pq::is_pq_stanza_tag(t));
     Ok(Probe {
         armored,
         tags,
         needs_passphrase,
         release,
+        post_quantum,
     })
 }
 

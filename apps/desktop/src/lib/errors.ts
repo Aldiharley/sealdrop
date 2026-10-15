@@ -23,10 +23,21 @@ const UNREACHABLE = /release service|connect|dns|timed out|timeout|network|error
 
 export type SealErrorField = "path" | "window" | "date" | undefined;
 
+const CLI_PQ_HINT = "create a post-quantum identity with `keygen --pq` to include yourself";
+const APP_PQ_HINT = "turn on Post-quantum identity in Keys and create a new identity to include yourself";
+
+/** Core's self-omitted note with its CLI hint replaced by the app's wording. */
+export function selfOmittedText(note: string): string {
+  return note.replace(CLI_PQ_HINT, APP_PQ_HINT);
+}
+
 export function mapSealError(msg: string, pluginNames: string[] = []): { text: string; field: SealErrorField } {
   const m = msg;
   if (/hardware-only recipients need/i.test(m)) {
     return { text: "Hardware keys alone can't be recovered. Add a second recipient or accept the warning.", field: undefined };
+  }
+  if (/cannot be mixed with classical/i.test(m)) {
+    return { text: "Post-quantum and classical recipients can't share one package. Remove one group, or seal twice.", field: undefined };
   }
   if (/policy refused:/i.test(m)) {
     const reason = m.replace(/^.*policy refused:\s*/i, "");

@@ -171,9 +171,14 @@ export function parseIsoDate(s: string): Date | null {
   return d;
 }
 
+/** Replace starts from the current identity's kind, so it never silently downgrades. */
+export function defaultPqForReplace(kind: string | null | undefined): boolean {
+  return kind === "pq";
+}
+
 export function kindLabel(kind: string): string {
   if (kind === "x25519") return "x25519";
-  if (kind === "hybrid-pq") return "post-quantum";
+  if (kind === "pq" || kind === "hybrid-pq") return "post-quantum";
   if (kind.startsWith("plugin:")) return "plugin";
   if (kind === "scrypt") return "passphrase (scrypt)";
   if (kind === "argon2id") return "passphrase (Argon2id)";

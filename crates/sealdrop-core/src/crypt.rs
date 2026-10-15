@@ -1,14 +1,17 @@
 //! Thin wrapper over the `age` crate (spec 4.2, 5.1, 5.2). Nothing below the age
 //! format layer is implemented here.
 
-use std::collections::BTreeMap;
+use std::cell::Cell;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::io::{BufReader, Read, Write};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use age::armor::{ArmoredReader, ArmoredWriter, Format};
-use age::secrecy::SecretString;
+use age::secrecy::{ExposeSecret, SecretString};
 use age::stream::StreamWriter;
+use age_core::format::{FileKey, Stanza};
 
 use crate::hashing::sha256_hex;
 use crate::{Error, Result};
@@ -28,11 +31,41 @@ fn redact(s: &str) -> String {
     }
 }
 
-/// `Hybrid` is large (ML-KEM public key); kept unboxed to match the module interface.
+/// HRP of age's native post-quantum recipients.
+const PQ_RECIPIENT_HRP: &str = "age1pq";
+/// HRP of age's tagged hybrid (P-256 + ML-KEM) recipients.
+const TAGPQ_RECIPIENT_HRP: &str = "age1tagpq";
+
+/// The Bech32 human-readable part (the text before the last `1`), lowercased.
+fn bech32_hrp(s: &str) -> Option<String> {
+    s.rfind('1').map(|i| s[..i].to_ascii_lowercase())
+}
+
+/// Parses `s` as a built-in recipient type owned by `hrp`. `Ok(None)` means `s` is not of
+/// that type; a string with exactly that HRP that fails to parse is an error, because
+/// falling through would parse it as a plugin named after the HRP and run any
+/// `age-plugin-<name>` on PATH.
+fn parse_owned_hrp<T>(
+    s: &str,
+    hrp: &str,
+    parse: impl FnOnce(&str) -> std::result::Result<T, ()>,
+) -> Result<Option<T>> {
+    match parse(s) {
+        Ok(r) => Ok(Some(r)),
+        Err(()) if bech32_hrp(s).as_deref() == Some(hrp) => Err(Error::InvalidRecipient(redact(s))),
+        Err(()) => Ok(None),
+    }
+}
+
+/// `Pq` and `Hybrid` are large (both hold an ML-KEM public key); kept unboxed to match
+/// the module interface.
 #[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Recipient {
     X25519(age::x25519::Recipient),
+    /// age 1.3's native post-quantum type (`age1pq1…`, ML-KEM-768 + X25519); `Hybrid`
+    /// below is the tagged P-256 variant.
+    Pq(crate::pq::Recipient),
     Hybrid(age::tagpq::Recipient),
     Plugin(age::plugin::Recipient),
 }
@@ -43,7 +76,18 @@ impl Recipient {
         if let Ok(r) = age::x25519::Recipient::from_str(s) {
             return Ok(Self::X25519(r));
         }
-        if let Ok(r) = age::tagpq::Recipient::from_str(s) {
+        // `age1pq1…` and `age1tagpq1…` are always the built-in types. A malformed one is an
+        // error rather than a plugin lookup (`age-plugin-pq`, `age-plugin-tagpq`).
+        let pq = parse_owned_hrp(s, PQ_RECIPIENT_HRP, |s| {
+            crate::pq::Recipient::from_str(s).map_err(|_| ())
+        })?;
+        if let Some(r) = pq {
+            return Ok(Self::Pq(r));
+        }
+        let tagpq = parse_owned_hrp(s, TAGPQ_RECIPIENT_HRP, |s| {
+            age::tagpq::Recipient::from_str(s).map_err(|_| ())
+        })?;
+        if let Some(r) = tagpq {
             return Ok(Self::Hybrid(r));
         }
         if let Ok(r) = age::plugin::Recipient::from_str(s) {
@@ -55,6 +99,7 @@ impl Recipient {
     pub fn kind(&self) -> String {
         match self {
             Self::X25519(_) => "x25519".into(),
+            Self::Pq(_) => "pq".into(),
             Self::Hybrid(_) => "hybrid-pq".into(),
             Self::Plugin(p) => format!("plugin:{}", p.plugin()),
         }
@@ -77,6 +122,7 @@ impl fmt::Display for Recipient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::X25519(r) => write!(f, "{r}"),
+            Self::Pq(r) => write!(f, "{r}"),
             Self::Hybrid(r) => write!(f, "{r}"),
             Self::Plugin(r) => write!(f, "{r}"),
         }
@@ -117,6 +163,7 @@ pub fn to_age_recipients(specs: &[Recipient]) -> Result<Vec<Box<dyn age::Recipie
     for s in specs {
         match s {
             Recipient::X25519(r) => out.push(Box::new(r.clone())),
+            Recipient::Pq(r) => out.push(Box::new(r.clone())),
             Recipient::Hybrid(r) => out.push(Box::new(r.clone())),
             Recipient::Plugin(p) => plugins
                 .entry(p.plugin().to_string())
@@ -149,6 +196,155 @@ pub fn plugin_identities(lines: &[&str]) -> Result<Vec<Box<dyn age::Identity>>> 
         out.push(Box::new(p));
     }
     Ok(out)
+}
+
+/// HKDF info string of the manifest `key_commitment` (spec 5.2).
+pub const COMMIT_INFO: &[u8] = b"sealdrop/commit/v1";
+
+/// Spec 5.2 `key_commitment`: HKDF-SHA-256(ikm = file key, salt = empty, info = COMMIT_INFO).
+pub fn key_commitment(file_key: &FileKey) -> [u8; 32] {
+    age_core::primitives::hkdf(&[], COMMIT_INFO, file_key.expose_secret())
+}
+
+/// Parses a manifest `key_commitment`: exactly 64 lowercase hex characters.
+pub fn parse_commitment(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 || !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return None;
+    }
+    let v = hex::decode(s).ok()?;
+    v.try_into().ok()
+}
+
+/// The commitment derived inside `wrap_file_key`. Public (it goes into the manifest), so
+/// no secret is retained once age has wrapped the file key.
+type CapturedCommitment = Arc<Mutex<Option<[u8; 32]>>>;
+
+/// Read side of a [`Committing`] recipient: stays usable after the recipient itself has
+/// been moved into the encryptor's recipient list.
+#[derive(Clone)]
+pub struct CommitmentHandle(CapturedCommitment);
+
+impl CommitmentHandle {
+    /// The hex `key_commitment` of the file key age generated; `None` until age has called
+    /// `wrap_file_key`.
+    pub fn commitment_hex(&self) -> Option<String> {
+        let g = self.0.lock().ok()?;
+        g.as_ref().map(hex::encode)
+    }
+}
+
+/// Wraps the outer recipient list so `seal` can learn the commitment to the file key age
+/// generated. Replicates age's label rule, because age only sees this one recipient.
+pub struct Committing {
+    inner: Vec<Box<dyn age::Recipient + Send>>,
+    captured: CapturedCommitment,
+}
+
+impl Committing {
+    pub fn new(inner: Vec<Box<dyn age::Recipient + Send>>) -> Self {
+        Self {
+            inner,
+            captured: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// A shared reader of the captured commitment, to take before boxing this recipient.
+    pub fn handle(&self) -> CommitmentHandle {
+        CommitmentHandle(Arc::clone(&self.captured))
+    }
+
+    pub fn commitment_hex(&self) -> Option<String> {
+        self.handle().commitment_hex()
+    }
+}
+
+impl age::Recipient for Committing {
+    fn wrap_file_key(
+        &self,
+        file_key: &FileKey,
+    ) -> std::result::Result<(Vec<Stanza>, HashSet<String>), age::EncryptError> {
+        let mut stanzas = Vec::new();
+        let mut labels: Option<HashSet<String>> = None;
+        for r in &self.inner {
+            let (s, l) = r.wrap_file_key(file_key)?;
+            match &labels {
+                None => labels = Some(l),
+                Some(prev) if *prev != l => {
+                    return Err(age::EncryptError::IncompatibleRecipients {
+                        l_labels: prev.clone(),
+                        r_labels: l,
+                    })
+                }
+                Some(_) => {}
+            }
+            stanzas.extend(s);
+        }
+        if stanzas.is_empty() {
+            return Err(age::EncryptError::MissingRecipients);
+        }
+        let mut g = self.captured.lock().map_err(|_| {
+            age::EncryptError::Io(std::io::Error::other("commitment capture lock poisoned"))
+        })?;
+        *g = Some(key_commitment(file_key));
+        Ok((stanzas, labels.unwrap_or_default()))
+    }
+}
+
+/// Wraps the outer identity so `open` can refuse a file key that does not match the signed
+/// manifest's `key_commitment` before age ever derives a payload key.
+pub struct CommittedIdentity<'a> {
+    inner: &'a dyn age::Identity,
+    expected: Option<[u8; 32]>,
+    mismatch: Cell<bool>,
+}
+
+impl<'a> CommittedIdentity<'a> {
+    pub fn new(inner: &'a dyn age::Identity, expected: Option<[u8; 32]>) -> Self {
+        Self {
+            inner,
+            expected,
+            mismatch: Cell::new(false),
+        }
+    }
+
+    /// True once an unwrapped file key failed the commitment check.
+    pub fn mismatched(&self) -> bool {
+        self.mismatch.get()
+    }
+
+    fn check(
+        &self,
+        r: Option<std::result::Result<FileKey, age::DecryptError>>,
+    ) -> Option<std::result::Result<FileKey, age::DecryptError>> {
+        match (&self.expected, r) {
+            (Some(want), Some(Ok(fk))) => {
+                use subtle::ConstantTimeEq;
+                if key_commitment(&fk).ct_eq(want).into() {
+                    Some(Ok(fk))
+                } else {
+                    self.mismatch.set(true);
+                    Some(Err(age::DecryptError::InvalidHeader))
+                }
+            }
+            (_, r) => r,
+        }
+    }
+}
+
+impl age::Identity for CommittedIdentity<'_> {
+    fn unwrap_stanza(
+        &self,
+        stanza: &Stanza,
+    ) -> Option<std::result::Result<FileKey, age::DecryptError>> {
+        self.check(self.inner.unwrap_stanza(stanza))
+    }
+
+    fn unwrap_stanzas(
+        &self,
+        stanzas: &[Stanza],
+    ) -> Option<std::result::Result<FileKey, age::DecryptError>> {
+        self.check(self.inner.unwrap_stanzas(stanzas))
+    }
 }
 
 #[must_use = "call finish() or the file is truncated"]
@@ -254,6 +450,75 @@ mod tests {
         assert_eq!(r.fingerprint().len(), 16);
         assert_eq!(r.to_string(), s);
         assert!(Recipient::parse("age1notvalid").is_err());
+    }
+
+    #[test]
+    fn parses_pq_recipient_before_plugin_fallback() {
+        let id = crate::pq::Identity::generate();
+        let s = id.to_public().to_string();
+        let r = Recipient::parse(&s).unwrap();
+        assert!(matches!(r, Recipient::Pq(_)));
+        assert_eq!(r.kind(), "pq");
+        assert_eq!(r.plugin_name(), None);
+        assert_eq!(r.to_string(), s);
+        assert_eq!(r.fingerprint().len(), 16);
+    }
+
+    #[test]
+    fn malformed_pq_recipient_is_an_error_not_a_plugin() {
+        let hrp = bech32::Hrp::parse("age1pq").unwrap();
+        // Checksum-valid, but a 32-byte payload instead of 1216.
+        let short = age_core::primitives::bech32_encode(hrp, &[7u8; 32]);
+        // A real recipient with its X25519 half zeroed (low order).
+        let good = crate::pq::Identity::generate().to_public().to_string();
+        let mut bytes: Vec<u8> =
+            age_core::primitives::bech32_decode(&good, |_| (), |_| Ok(()), |_, b| Ok(b.collect()))
+                .unwrap();
+        let n = bytes.len();
+        bytes[n - 32..].fill(0);
+        let low_order = age_core::primitives::bech32_encode(hrp, &bytes);
+        for s in [short.clone(), short.to_uppercase(), low_order] {
+            match Recipient::parse(&s) {
+                Err(Error::InvalidRecipient(_)) => {}
+                other => panic!(
+                    "expected InvalidRecipient, got {:?}",
+                    other.map(|r| r.kind())
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_tagpq_recipient_is_an_error_not_a_plugin() {
+        let hrp = bech32::Hrp::parse("age1tagpq").unwrap();
+        // Checksum-valid, but a 32-byte payload instead of a P-256 + ML-KEM key.
+        let short = age_core::primitives::bech32_encode(hrp, &[7u8; 32]);
+        for s in [short.clone(), short.to_uppercase()] {
+            match Recipient::parse(&s) {
+                Err(Error::InvalidRecipient(_)) => {}
+                other => panic!(
+                    "expected InvalidRecipient, got {:?}",
+                    other.map(|r| r.kind())
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn round_trips_to_pq_recipient() {
+        let id = crate::pq::Identity::generate();
+        let specs = vec![Recipient::parse(&id.to_public().to_string()).unwrap()];
+        let recips = to_age_recipients(&specs).unwrap();
+        let mut w = encrypt_writer(Vec::new(), &recips, false).unwrap();
+        w.write_all(b"pq hello").unwrap();
+        let ct = w.finish().unwrap();
+        let ids: Vec<Box<dyn age::Identity>> = vec![Box::new(id)];
+        let mut pt = Vec::new();
+        decrypt_reader(&ct[..], &ids)
+            .unwrap()
+            .read_to_end(&mut pt)
+            .unwrap();
+        assert_eq!(pt, b"pq hello");
     }
 
     #[test]
@@ -382,6 +647,59 @@ mod tests {
             Err(Error::Other(m)) => assert!(m.contains("age-plugin-sealdroptest"), "{m}"),
             other => panic!("expected Error::Other, got ok={}", other.is_ok()),
         }
+    }
+
+    #[test]
+    fn committing_recipient_captures_the_file_key_and_checks_labels() {
+        use age_core::format::FileKey;
+        let id = age::x25519::Identity::generate();
+        let c = Committing::new(vec![Box::new(id.to_public())]);
+        assert!(c.commitment_hex().is_none());
+        let fk = FileKey::new(Box::new([9u8; 16]));
+        let (stanzas, labels) = age::Recipient::wrap_file_key(&c, &fk).unwrap();
+        assert_eq!(stanzas.len(), 1);
+        assert!(labels.is_empty());
+        assert_eq!(
+            c.commitment_hex().unwrap(),
+            hex::encode(key_commitment(&fk))
+        );
+        assert_eq!(
+            parse_commitment(&c.commitment_hex().unwrap()).unwrap(),
+            key_commitment(&fk)
+        );
+        assert!(parse_commitment("ABCD").is_none());
+        // Mixed label sets are refused, as age itself would.
+        let pq = crate::pq::Identity::generate();
+        let mixed = Committing::new(vec![Box::new(id.to_public()), Box::new(pq.to_public())]);
+        assert!(matches!(
+            age::Recipient::wrap_file_key(&mixed, &fk),
+            Err(age::EncryptError::IncompatibleRecipients { .. })
+        ));
+    }
+
+    #[test]
+    fn committed_identity_refuses_a_wrong_commitment() {
+        use age_core::format::FileKey;
+        let id = age::x25519::Identity::generate();
+        let fk = FileKey::new(Box::new([3u8; 16]));
+        let (stanzas, _) = age::Recipient::wrap_file_key(&id.to_public(), &fk).unwrap();
+        let good = CommittedIdentity::new(&id, Some(key_commitment(&fk)));
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&good, &stanzas[0]),
+            Some(Ok(_))
+        ));
+        assert!(!good.mismatched());
+        let bad = CommittedIdentity::new(&id, Some([0u8; 32]));
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&bad, &stanzas[0]),
+            Some(Err(_))
+        ));
+        assert!(bad.mismatched());
+        let unchecked = CommittedIdentity::new(&id, None);
+        assert!(matches!(
+            age::Identity::unwrap_stanza(&unchecked, &stanzas[0]),
+            Some(Ok(_))
+        ));
     }
 
     #[test]

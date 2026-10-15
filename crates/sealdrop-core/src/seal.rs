@@ -57,6 +57,8 @@ pub struct SealResult {
     pub manifest_doc: Manifest,
     pub passphrase: Option<Passphrase>,
     pub pack: PackReport,
+    /// Why the sender's own identity was left out of the package, if it was.
+    pub self_omitted: Option<String>,
 }
 
 /// `<name>.sealdrop.age` -> (`<name>.manifest.json`, `<name>.manifest.json.minisig`).
@@ -176,9 +178,21 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
     }
     // Passphrase and timed-release packages hold exactly what the caller chose; self is
     // only added to plain recipient packages.
+    let mut self_omitted: Option<String> = None;
     if req.include_self && !passphrase_mode && req.release.is_none() {
         let me = Recipient::parse(&store.recipient_string()?)?;
-        if !specs.iter().any(|r| r.to_string() == me.to_string()) {
+        let given_pq = !specs.is_empty()
+            && specs
+                .iter()
+                .all(|r| policy::is_post_quantum_kind(&r.kind()));
+        let me_pq = policy::is_post_quantum_kind(&me.kind());
+        if !specs.is_empty() && given_pq != me_pq {
+            self_omitted = Some(if given_pq {
+                "your own identity is classical (x25519), so it was not added to this post-quantum package; create a post-quantum identity with `keygen --pq` to include yourself".into()
+            } else {
+                "your own identity is post-quantum, so it was not added to this classical package; the recipients would otherwise be mixed".into()
+            });
+        } else if !specs.iter().any(|r| r.to_string() == me.to_string()) {
             specs.push(me);
         }
     }
@@ -256,10 +270,17 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
     };
 
     // Pack through the encryptor; `pack` hands the writer back so we can finish it.
-    let writer = crypt::encrypt_writer(file, &recipients, req.armor)?;
+    // `Committing` captures the file key age generates, for the manifest's key_commitment.
+    let committing = crypt::Committing::new(recipients);
+    let commitment = committing.handle();
+    let outer: Vec<Box<dyn age::Recipient + Send>> = vec![Box::new(committing)];
+    let writer = crypt::encrypt_writer(file, &outer, req.armor)?;
     let (pack_report, writer) = pack(&req.input, writer)?;
     let buf = writer.finish()?;
     buf.into_inner().map_err(|e| Error::Io(e.into_error()))?;
+    let key_commitment = commitment
+        .commitment_hex()
+        .ok_or_else(|| Error::Other("file key was not captured".into()))?;
     let (ct_sha, ct_size) = crate::hashing::sha256_file(&package)?;
     progress.on(ProgressEvent::Encrypted { bytes: ct_size });
 
@@ -312,6 +333,7 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
             sha256: ct_sha,
         },
         plaintext_tar_sha256: pack_report.tar_sha256.clone(),
+        key_commitment: Some(key_commitment),
         recipients: recipients_info,
         signer: store.signing_public_string()?,
         classification: req.classification.clone(),
@@ -342,5 +364,6 @@ pub fn seal(store: &KeyStore, req: SealRequest, progress: &dyn Progress) -> Resu
         manifest_doc: doc,
         passphrase,
         pack: pack_report,
+        self_omitted,
     })
 }

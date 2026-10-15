@@ -3041,6 +3041,7 @@ dependencies = [
  "kem",
  "rand_core 0.6.4",
  "sha3",
+ "zeroize",
 ]
 
 [[package]]
@@ -4448,7 +4449,7 @@ dependencies = [
 
 [[package]]
 name = "sealdrop-cli"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "age",
  "anyhow",
@@ -4459,6 +4460,7 @@ dependencies = [
  "minisign",
  "predicates",
  "qrcode",
+ "rpassword",
  "sealdrop-core",
  "sealdrop-release",
  "serde_json",
@@ -4469,7 +4471,7 @@ dependencies = [
 
 [[package]]
 name = "sealdrop-core"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "age",
  "age-core",
@@ -4481,25 +4483,31 @@ dependencies = [
  "dirs 6.0.0",
  "flate2",
  "hex",
+ "hpke",
  "minisign",
+ "ml-kem",
  "proptest",
  "rand 0.9.5",
+ "rand_core 0.6.4",
  "secrecy",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sha3",
+ "subtle",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
  "ureq",
  "uuid",
  "walkdir",
+ "x25519-dalek",
  "zeroize",
 ]
 
 [[package]]
 name = "sealdrop-desktop"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "age",
  "bech32",
@@ -4517,7 +4525,7 @@ dependencies = [
 
 [[package]]
 name = "sealdrop-release"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",

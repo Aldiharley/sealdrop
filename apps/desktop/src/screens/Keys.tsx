@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText } from "../lib/api";
 import { useApp } from "../lib/app";
-import { formatDate, plural, shortSigner } from "../lib/format";
+import { defaultPqForReplace, formatDate, plural, shortSigner } from "../lib/format";
 import { g1, mapReceiptFetchError } from "../lib/errors";
 import { baseName } from "../lib/format";
 import { mockQuery, useOnceWhen } from "../lib/hooks";
@@ -17,6 +17,15 @@ import { LinkButton, SoftButton } from "../components/SoftButton";
 import { Tile } from "../components/Tile";
 import { TrustForm } from "../components/TrustForm";
 import { Notice } from "../components/Notice";
+import { Toggle } from "../components/Toggle";
+
+const PQ_HELPER =
+  "Protects against a future quantum computer reading packages recorded today. Senders need sealdrop 0.3 or age 1.3 or newer, and your recipient string becomes about 2 000 characters long.";
+
+/** Off by default; the helper text is linked to the switch with aria-describedby. */
+function PqSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return <Toggle checked={checked} onChange={onChange} unavailable={disabled} label="Post-quantum identity" helper={PQ_HELPER} />;
+}
 
 interface ReceiptRow {
   path: string;
@@ -35,6 +44,7 @@ function stemOf(path: string): string {
 export default function Keys({ active }: { active: boolean }) {
   const { identity, setIdentity, announce, focusCreateTick, screen } = useApp();
   const [creating, setCreating] = useState(false);
+  const [pq, setPq] = useState(false);
   const [idError, setIdError] = useState<string | null>(null);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
@@ -78,7 +88,7 @@ export default function Keys({ active }: { active: boolean }) {
     setIdError(null);
     setReplaceError(null);
     try {
-      const info = await api.generateIdentity(force);
+      const info = await api.generateIdentity(force, pq);
       setIdentity(info);
       announce("Identity created.");
       setCreatedMsg("Identity created.");
@@ -146,6 +156,7 @@ export default function Keys({ active }: { active: boolean }) {
                   It stays on this computer.
                 </p>
                 {idError ? <Notice tone="err">{idError}</Notice> : null}
+                <PqSwitch checked={pq} onChange={setPq} disabled={creating} />
                 {creating ? <Progress label="Creating your keys" /> : null}
                 <div>
                   <SoftButton ref={createRef} variant="primary" loading={creating} busyLabel="Creating your keys…" onClick={() => create(false)}>
@@ -157,7 +168,12 @@ export default function Keys({ active }: { active: boolean }) {
               <div className="stack">
                 {createdMsg ? <div role="status">{createdMsg}</div> : null}
                 <Field
-                  label="Recipient"
+                  label={
+                    <span className="cluster">
+                      <span>Recipient</span>{" "}
+                      {identity.kind ? <Badge tone="info">{identity.kind === "pq" ? "post-quantum" : "x25519"}</Badge> : null}
+                    </span>
+                  }
                   as="textarea"
                   readOnly
                   mono
@@ -183,6 +199,7 @@ export default function Keys({ active }: { active: boolean }) {
                     onClick={() => {
                       setConfirmText("");
                       setReplaceError(null);
+                      setPq(defaultPqForReplace(identity.kind));
                       setReplaceOpen(true);
                     }}
                   >
@@ -307,6 +324,7 @@ export default function Keys({ active }: { active: boolean }) {
           onClose={() => setReplaceOpen(false)}
         >
           <div className="stack">
+            <PqSwitch checked={pq} onChange={setPq} disabled={creating} />
             <Field label="Type REPLACE to confirm" value={confirmText} onChange={setConfirmText} placeholder="REPLACE" disabled={creating} />
             {replaceError ? <Notice tone="err">{replaceError}</Notice> : null}
             <div className="cluster" style={{ justifyContent: "flex-end", gap: 12 }}>

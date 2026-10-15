@@ -142,6 +142,16 @@ fn plan(input: &Path) -> Result<Plan> {
     } else {
         return Err(Error::Other("input is neither a file nor a folder".into()));
     }
+    if let Some((a, b)) = crate::extract::case_collision(
+        dirs.iter()
+            .map(String::as_str)
+            .chain(files.iter().map(|(_, f)| f.path.as_str())),
+    ) {
+        return Err(Error::Other(format!(
+            "cannot seal {root_name}: `{a}` and `{b}` differ only in letter case, so one would \
+             replace the other on Windows and macOS; rename one of them"
+        )));
+    }
     Ok(Plan {
         is_dir: md.is_dir(),
         root_name,
@@ -349,6 +359,23 @@ fn write_plan_with<W: Write>(
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn refuses_paths_that_collide_in_case() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("r");
+        std::fs::create_dir_all(root.join("Sub")).unwrap();
+        std::fs::write(root.join("a.txt"), b"1").unwrap();
+        // On a case-insensitive FS the second write replaces the first; skip there.
+        if std::fs::write(root.join("A.txt"), b"2").is_err()
+            || std::fs::read_dir(&root).unwrap().count() < 3
+        {
+            eprintln!("skipping: case-insensitive file system");
+            return;
+        }
+        let err = pack(&root, Vec::new()).err().unwrap().to_string();
+        assert!(err.contains("letter case"), "{err}");
+    }
 
     fn fixture() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();

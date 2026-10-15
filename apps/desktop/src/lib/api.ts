@@ -39,7 +39,7 @@ async function onDragDrop(cb: (e: T.DragDropEvent) => void): Promise<() => void>
 export const api = {
   isMock: !isTauri,
   getIdentity: () => call<T.IdentityInfo>("get_identity"),
-  generateIdentity: (force: boolean) => call<T.IdentityInfo>("generate_identity", { force }),
+  generateIdentity: (force: boolean, pq = false) => call<T.IdentityInfo>("generate_identity", { force, pq }),
   parseRecipient: (s: string) => call<T.RecipientCheck>("parse_recipient", { s }),
   seal: (req: T.SealArgs) => call<T.SealOut>("seal", { req }),
   probe: (path: string) => call<T.ProbeOut>("probe", { path }),

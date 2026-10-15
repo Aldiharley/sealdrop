@@ -17,6 +17,7 @@ anyhow.workspace = true
 clap.workspace = true
 minisign.workspace = true
 qrcode = { version = "0.14", default-features = false }
+rpassword = "7"
 serde_json.workspace = true
 zeroize.workspace = true
 

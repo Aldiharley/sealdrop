@@ -7,6 +7,7 @@ import {
   formatBytes,
   hostOf,
   isInside,
+  kindLabel,
   parentDir,
   parseIsoDate,
   parseWindow,
@@ -18,10 +19,10 @@ import {
   windowText,
 } from "../lib/format";
 import type { WindowUnit } from "../lib/format";
-import { mapSealError } from "../lib/errors";
+import { mapSealError, selfOmittedText } from "../lib/errors";
 import { mockQuery, useIdleClear, useOnceWhen, useProgress } from "../lib/hooks";
 import type { RecipientCheck, SealArgs, SealOut } from "../lib/types";
-import { Chip } from "../components/Chip";
+import { Badge, Chip } from "../components/Chip";
 import { CopyButton } from "../components/CopyButton";
 import { DropZone } from "../components/DropZone";
 import { Field } from "../components/Field";
@@ -53,6 +54,10 @@ interface Sealed {
   windowSecs: number | null;
   host: string;
   folder: string;
+  /** Why your own identity was left out of the package, if it was. */
+  selfOmitted: string | null;
+  /** Every recipient of the package is post-quantum. */
+  postQuantum: boolean;
 }
 
 // The release service purges never-opened deposits (see crates/sealdrop-release/README.md, Retention).
@@ -278,6 +283,8 @@ export default function Seal({ active }: { active: boolean }) {
         windowSecs: out.release?.window_secs ?? null,
         host: out.release ? hostOf(out.release.service) : snap.host,
         folder: parentDir(out.package),
+        selfOmitted: out.self_omitted,
+        postQuantum: out.post_quantum,
       });
       announce(words2 ? "Sealed. Passphrase shown. It is shown once." : "Sealed.");
       window.setTimeout(() => (words2 ? passHeading.current : sealedHeading.current)?.focus(), 60);
@@ -440,10 +447,12 @@ export default function Seal({ active }: { active: boolean }) {
                   <h3 ref={sealedHeading} tabIndex={-1} className="lead no-ring">
                     Sealed.
                   </h3>
+                  {sealed.postQuantum ? <Badge tone="info">Post-quantum</Badge> : null}
                 </div>
                 <div>
                   3 files written to <span className="mono">{sealed.folder}</span>.
                 </div>
+                {sealed.selfOmitted ? <Notice tone="warn">{selfOmittedText(sealed.selfOmitted)}</Notice> : null}
                 <div className="stack stack--sm">
                   <KV k="Package">
                     <span className="cluster" style={{ gap: 12 }}>
@@ -596,15 +605,17 @@ export default function Seal({ active }: { active: boolean }) {
                     <div className="chip-list">
                       {recs.map((r, i) => {
                         const short = shortRecipient(r.raw, r.check.plugin);
+                        const pqLabel = kindLabel(r.check.kind) === "post-quantum" ? "post-quantum" : null;
                         return (
                           <Chip
                             key={r.raw}
                             tone={recipientTone(r.check.kind)}
                             title={r.raw}
-                            removeLabel={`Remove recipient ${short}`}
+                            removeLabel={`Remove ${pqLabel ? "post-quantum " : ""}recipient ${short}`}
                             removeDisabled={busy}
                             onRemove={() => removeRecipient(i)}
                           >
+                            {pqLabel ? <span style={{ fontSize: 13, fontWeight: 700 }}>{pqLabel} · </span> : null}
                             <span className="mono" style={{ fontSize: 13 }}>
                               {short}
                             </span>
