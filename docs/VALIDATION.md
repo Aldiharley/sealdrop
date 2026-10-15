@@ -1,6 +1,10 @@
-# Validation evidence for sealdrop 0.2.0
+Evidence for 0.2.x is at tag v0.2.2 (`docs/VALIDATION.md` there).
 
-Toolchain gates, tests, CCTV, interop, the desktop build, the two regenerated screenshots and the real desktop runs were re-run on branch `main` after the final-review fix wave: tests, clippy, fmt and `npm run build` at commit `c9891fa` (the two re-review residuals, N1 and N2); the installers, real desktop runs and screenshots at `10cf7bd` (N1/N2 change only the CLI, one Open-screen field and tests). The docs-only commit that updates this file sits on top. The manual CLI timed-release session further down was recorded earlier, at `6913101`, and is kept as it was (Windows 11, `cargo` 1.96.0, Node 20.18.0, Go `age` v1.3.2, `tauri-cli` 2.11.2). Everything below comes from commands run for this document. The Code Reviewer and Reality Checker passes are separate and are not recorded here.
+# Validation evidence for sealdrop 0.3.0
+
+Everything below comes from commands run on branch `feat/0.3-pq-commitment` for this document, at commit `afc7921` (`chore: 0.3.0; regenerate spec vectors`) with only documentation edits on top (Windows 11, `cargo` 1.96.0, `rustc` 1.96.0, Node 20.18.0, Go `age` v1.3.2). Paths in the manual session are shortened; the long `age1pq1…` recipient is cut with `…` (it is public, about 1,900 characters). No secret line (identity file contents, passphrase, deposit token) appears anywhere in this file. The Code Reviewer and Reality Checker passes are separate and are not recorded here.
+
+0.3.0 adds native `age1pq1…` identities and recipients, the post-quantum-must-not-mix rule, the manifest `key_commitment`, case-collision refusal, a hidden CLI passphrase prompt, desktop support for all of these, a revised format spec and 20 vectors. The desktop installers, the real-app runs and the screenshots from 0.2 were not repeated; see "Not re-run for 0.3".
 
 ## Summary
 
@@ -8,53 +12,55 @@ Toolchain gates, tests, CCTV, interop, the desktop build, the two regenerated sc
 |---|---|
 | `cargo fmt --all --check` | pass (no output, exit 0) |
 | `cargo clippy --workspace --all-targets -- -D warnings` | pass (`Finished`, no warnings) |
-| `cargo test --workspace` (`SEALDROP_REQUIRE_AGE=1`) | pass: 149 passed, 0 failed, 0 ignored |
+| `cargo test --workspace` (`SEALDROP_REQUIRE_AGE=1`, Go `age` on `PATH`) | pass: 193 passed, 0 failed, 0 ignored; no line containing "warning" |
+| CCTV (`--test cctv`) | `CCTV: total=147 passed=147 failed=0` (no skips) |
+| Interop (`--test interop_age`) | 5 passed, 0 failed (4 run the Go CLI, 1 uses the age crate for scrypt) |
+| Spec vectors (`--test format_vectors`) | 3 passed: 20 vectors `ok`, 12 `stock_age` claims checked against Go age |
 | `cargo deny check licenses advisories` | `advisories ok, licenses ok` (one warning: unused license allowance) |
-| CCTV (`--test cctv`) | `total=147 passed=128 skipped=19 failed=0` |
-| Interop (`--test interop_age`) | 3 passed, 0 failed. Recipient-mode packages opened by stock age (2 tests run the Go CLI); scrypt-mode verified with the age crate only |
-| `npm run build` (apps/desktop) | pass (needs the Node 20 workaround below) |
-| `cargo tauri build` | pass: exe, MSI and NSIS installer produced |
-| Manual timed-release run | open before expiry exit 0; open after expiry exit 2, "expired" |
-| Screenshots | 7 PNGs, each 1120x760 (`seal-passphrase.png` and `open-timed.png` regenerated at `10cf7bd`) |
-| Desktop, real app | `npx tauri dev` driven over CDP (seal, probe, verify, open, receipt, temp-folder removal on close); release exe started and answered for 10 s |
-| `sealdrop recipient \| true` | exit 0, nothing on stderr (was exit 101, panic) |
+| `npm test` (apps/desktop) | 10 tests, 4 suites, 10 pass, 0 fail |
+| `npm run build` (apps/desktop) | pass (`tsc --noEmit && vite build`, `built in 388ms`) |
+| Manual PQ session (CLI) | seal to `age1pq1…` from a classical store, `verify` shows `post-quantum: yes`, `open` with the PQ store restores the files, Go `age -d` lists the same package; mixing is refused with exit 3 |
 
 ## Tests per crate
 
-From `cargo test --workspace 2>&1 | tee $TEMP/sealdrop-test.log`, with `SEALDROP_REQUIRE_AGE=1` and Go `age` on `PATH`. The log has no line containing "warning", and 149 lines matching `^test .* ok$`.
+From `cargo test --workspace > test.log 2>&1` with `SEALDROP_REQUIRE_AGE=1` and `$HOME/go/bin` on `PATH`. The log has no line containing "warning" and 193 lines matching `^test .* ok$`.
 
 | Crate | Test binary | Passed |
 |---|---|---|
-| sealdrop-cli | unit (`src/main.rs`) | 9 |
-| sealdrop-cli | `tests/cli.rs` | 14 |
-| sealdrop-core | unit (`src/lib.rs`) | 75 |
+| sealdrop-cli | unit (`src/main.rs`) | 10 |
+| sealdrop-cli | `tests/cli.rs` | 16 |
+| sealdrop-core | unit (`src/lib.rs`) | 108 |
 | sealdrop-core | `tests/cctv.rs` | 1 (runs the 147 CCTV vectors, see below) |
-| sealdrop-core | `tests/interop_age.rs` | 3 |
+| sealdrop-core | `tests/format_vectors.rs` | 3 (20 vectors, `stock_age` claims, version parsing) |
+| sealdrop-core | `tests/format_vectors_gen.rs` | 0 (the regeneration test is `#[ignore]`d and needs `--features test-support`) |
+| sealdrop-core | `tests/interop_age.rs` | 5 |
 | sealdrop-core | `tests/malicious_tar.rs` | 15 |
 | sealdrop-core | `tests/no_memory_seam.rs` | 1 |
 | sealdrop-core | `tests/roundtrip_prop.rs` | 1 |
-| sealdrop-desktop | unit (`src/main.rs`) | 16 |
+| sealdrop-desktop | unit (`src/main.rs`) | 19 |
 | sealdrop-release | unit (lib and main) | 0 |
 | sealdrop-release | `tests/cli.rs` | 2 |
 | sealdrop-release | `tests/service.rs` | 12 |
 | Doc-tests | sealdrop_core, sealdrop_release | 0 |
-| **Total** | | **149** (9+14+75+1+3+15+1+1+16+2+12) |
+| **Total** | | **193** (10+16+108+1+3+5+15+1+1+19+2+12) |
 
 The `test result` lines from the log, in order (executable hash suffixes dropped, the crate added in parentheses; counts and timings are as printed):
 
 ```
-Running unittests src\main.rs (sealdrop-cli)        test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-Running tests\cli.rs (sealdrop-cli)                 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.20s
-Running unittests src\lib.rs (sealdrop-core)        test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.56s
-Running tests\cctv.rs                               test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.64s
-Running tests\interop_age.rs                        test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.55s
-Running tests\malicious_tar.rs                      test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+Running unittests src\main.rs (sealdrop-cli)        test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Running tests\cli.rs (sealdrop-cli)                 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
+Running unittests src\lib.rs (sealdrop-core)        test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.03s
+Running tests\cctv.rs                               test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.60s
+Running tests\format_vectors.rs                     test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.99s
+Running tests\format_vectors_gen.rs                 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Running tests\interop_age.rs                        test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.91s
+Running tests\malicious_tar.rs                      test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 Running tests\no_memory_seam.rs                     test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-Running tests\roundtrip_prop.rs                     test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.91s
-Running unittests src\main.rs (sealdrop-desktop)    test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+Running tests\roundtrip_prop.rs                     test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.25s
+Running unittests src\main.rs (sealdrop-desktop)    test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
 Running unittests src\lib.rs (sealdrop-release)     test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 Running unittests src\main.rs (sealdrop-release)    test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-Running tests\cli.rs (sealdrop-release)             test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+Running tests\cli.rs (sealdrop-release)             test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
 Running tests\service.rs                            test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 Doc-tests sealdrop_core                             test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 Doc-tests sealdrop_release                          test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -63,30 +69,76 @@ Doc-tests sealdrop_release                          test result: ok. 0 passed; 0
 ## CCTV vectors
 
 ```
-$ cargo test -p sealdrop-core --test cctv -- --nocapture 2>&1 | grep -E "total|passed|skipped|failed"
-CCTV: total=147 passed=128 skipped=19 failed=0
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.87s
+$ cargo test -p sealdrop-core --test cctv -- --nocapture 2>&1 | grep -E "total|passed|skipped|failed|SKIP"
+CCTV: total=147 passed=147 failed=0
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.22s
 ```
 
-147 vectors, 128 passed, 19 skipped, 0 failed. The 19 skipped are the hybrid (`age1pq`) vectors, and the run prints the reason for each one, for example:
-
-```
-SKIPPED hybrid_uppercase (expect=no match): identity type not supported by age 0.12.1: the first argument in the mlkem768x25519 stanza is uppercase
-```
+147 vectors, 147 passed, 0 failed, and no `SKIPPED` line. In 0.2 the 19 native post-quantum (`mlkem768x25519`) vectors were skipped because the age crate has no identity type for them; sealdrop's own `pq` module now supplies it.
 
 ## Interop with stock age
 
 ```
 $ age --version
 v1.3.2
-$ SEALDROP_REQUIRE_AGE=1 cargo test -p sealdrop-core --test interop_age -- --nocapture 2>&1 | grep -iE "test |skipping|result"
+$ SEALDROP_REQUIRE_AGE=1 cargo test -p sealdrop-core --test interop_age -- --nocapture 2>&1 | grep -iE "^test |skipping|result"
+test sealdrop_decrypts_what_stock_age_encrypted_to_pq ... ok
 test stock_age_decrypts_recipient_mode_and_tar_extracts ... ok
+test stock_age_decrypts_pq_recipient_package ... ok
 test scrypt_mode_opens_with_the_age_crate_not_the_go_cli ... ok
 test stock_age_rejects_argon2id_package ... ok
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.55s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.51s
 ```
 
-Interop: recipient-mode packages opened by stock age (2 tests run the Go `age` CLI: the recipient-mode decrypt and the refusal of an Argon2id package); scrypt-mode verified with the age crate only. The Go CLI reads a passphrase only from a terminal and has no non-interactive input, so the scrypt test decrypts with the `age` crate, the same implementation that wrote the file; it shows format conformance, not independent interop. No "skipping" line appears. The manual session below also has stock `age -d | tar -t` listing a recipient-mode package, and failing on a timed-release package (by design, see the limitations).
+- Go `age` v1.3.2 opens a recipient-mode package (`stock_age_decrypts_recipient_mode_and_tar_extracts`) and a package sealed to a sealdrop-generated `age1pq1…` identity (`stock_age_decrypts_pq_recipient_package`), and refuses an Argon2id package (`stock_age_rejects_argon2id_package`).
+- The other direction: sealdrop opens a file that Go `age` encrypted to a sealdrop PQ recipient (`sealdrop_decrypts_what_stock_age_encrypted_to_pq`, the raw age layer).
+- scrypt mode is verified with the age crate only: the Go CLI reads a passphrase only from a terminal, so the test cannot drive it. It shows format conformance, not independent interop.
+- No "skipping" line appears. The manual PQ session below also runs Go `age -d` on a package.
+
+## Spec vectors
+
+```
+$ SEALDROP_REQUIRE_AGE=1 cargo test -p sealdrop-core --test format_vectors -- --nocapture
+running 3 tests
+test version_parsing ... ok
+age   argon2id-reject-p-too-large: rejects
+age   argon2id-reject-t-too-large: rejects
+age   armored-x25519: opens
+age   ciphertext-tampered: rejects
+age   commitment-mismatch: opens
+age   manifest-tampered: opens
+age   manifest-wrong-comment: opens
+age   passphrase-argon2id-compat: rejects
+age   recipient-pq: opens
+age   recipient-x25519: opens
+age   timed-release-passphrase: rejects
+age   timed-release-x25519: rejects
+test stock_age_claims ... ok
+ok    argon2id-reject-p-too-large
+ok    argon2id-reject-t-too-large
+ok    armored-x25519
+ok    ciphertext-tampered
+ok    commitment-mismatch
+ok    manifest-tampered
+ok    manifest-wrong-comment
+ok    passphrase-argon2id-compat
+ok    passphrase-scrypt
+ok    receipt-valid
+ok    receipt-wrong-key
+ok    recipient-pq
+ok    recipient-x25519
+ok    tar-reject-long-name-bomb
+ok    tar-reject-pax-size
+ok    tar-reject-symlink
+ok    tar-reject-traversal
+ok    tar-reject-unlisted-file
+ok    timed-release-passphrase
+ok    timed-release-x25519
+test all_format_vectors ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.11s
+```
+
+(The tests run in parallel, so the `age` lines and the `ok` lines were interleaved in the real output; they are regrouped here, and the `Compiling`/`Running` header lines are omitted.) 20 vectors passed the reference implementation. The 12 `age` lines are the `stock_age` claims checked against Go age v1.3.2 ("opens" for 6 vectors, "rejects" for 6). The other 8 are not driven through the Go CLI: the two receipt vectors and the five `tar-reject-*` vectors carry `stock_age: n/a` (no package for age to read), and `passphrase-scrypt` carries `opens-interactive` (the Go CLI reads a passphrase only from a terminal). The vector manifests were regenerated after the version bump with `SEALDROP_VECTORS_FORCE=1 cargo test -p sealdrop-core --features test-support --test format_vectors_gen -- --ignored regenerate_format_vectors` (1 passed), and every manifest now reads `"tool": "sealdrop 0.3.0"`.
 
 ## clippy, fmt, deny
 
@@ -95,11 +147,11 @@ $ cargo fmt --all --check; echo "fmt exit=$?"
 fmt exit=0
 
 $ cargo clippy --workspace --all-targets -- -D warnings
-    Checking sealdrop-core v0.2.0 (M:\Projects\sealdrop\crates\sealdrop-core)
-    Checking sealdrop-release v0.2.0 (M:\Projects\sealdrop\crates\sealdrop-release)
-    Checking sealdrop-desktop v0.2.0 (M:\Projects\sealdrop\apps\desktop\src-tauri)
-    Checking sealdrop-cli v0.2.0 (M:\Projects\sealdrop\crates\sealdrop-cli)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.98s
+    Checking sealdrop-core v0.3.0 (M:\Projects\sealdrop\crates\sealdrop-core)
+   Compiling sealdrop-desktop v0.3.0 (M:\Projects\sealdrop\apps\desktop\src-tauri)
+    Checking sealdrop-release v0.3.0 (M:\Projects\sealdrop\crates\sealdrop-release)
+    Checking sealdrop-cli v0.3.0 (M:\Projects\sealdrop\crates\sealdrop-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.52s
 
 $ cargo deny check licenses advisories
 warning[license-not-encountered]: license was not encountered
@@ -109,271 +161,167 @@ warning[license-not-encountered]: license was not encountered
 advisories ok, licenses ok
 ```
 
-(Both outputs are trimmed to the relevant lines: the clippy dependency `Checking` lines are omitted, and the deny warning's box drawing is condensed.)
+(The clippy dependency `Checking` lines are omitted, and the deny warning's box drawing is condensed.)
 
-## Desktop build
+## Desktop front end
 
 ```
-$ cd apps/desktop && npm i --no-save --force @rolldown/binding-win32-x64-msvc && npm run build
-found 0 vulnerabilities
+$ cd apps/desktop && npm test
+...
+    # Subtest: generate_identity honours pq
+    ok 4 - generate_identity honours pq
+    # Subtest: verify and open expose post_quantum
+    ok 5 - verify and open expose post_quantum
+...
+# tests 10
+# suites 4
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+
+$ cd apps/desktop && npm run build
+...
+dist/assets/mock-ZSo4xQWK.js                                  8.20 kB │ gzip:   3.48 kB
 dist/assets/webview-BjKnOuh1.js                              16.34 kB │ gzip:   3.51 kB
-dist/assets/index-D3afWirr.js                               339.23 kB │ gzip: 105.87 kB
-(plus index.html, CSS, fonts and small chunks)
-✓ built in 235ms
-
-$ cd apps/desktop && cargo tauri build      (tauri-cli 2.11.2, 4m03s)
-warning: sealdrop-desktop@0.2.0: STATIC_VCRUNTIME is deprecated; use build.windows.staticVCRuntime in tauri.conf.json or tauri_build::WindowsAttributes::static_vc_runtime instead.
-    Finished `release` profile [optimized] target(s) in 3m 49s
-       Built application at: M:\Projects\sealdrop\target\release\sealdrop-desktop.exe
-     Running candle for "M:\\Projects\\sealdrop\\target\\release\\wix\\x64\\main.wxs"
-     Running light to produce M:\Projects\sealdrop\target\release\bundle\msi\sealdrop_0.2.0_x64_en-US.msi
-     Running makensis to produce M:\Projects\sealdrop\target\release\bundle\nsis\sealdrop_0.2.0_x64-setup.exe
-    Finished 2 bundles at:
-        M:\Projects\sealdrop\target\release\bundle\msi\sealdrop_0.2.0_x64_en-US.msi
-        M:\Projects\sealdrop\target\release\bundle\nsis\sealdrop_0.2.0_x64-setup.exe
+dist/assets/index-DHVYEJIU.js                               341.12 kB │ gzip: 106.49 kB
+✓ built in 388ms
 ```
 
-The bundles land in the workspace `target/`, not under `apps/desktop/src-tauri/target/`.
+`npm test` bundles `src/lib/format.pq.test.ts` with rolldown and runs it on Node's built-in test runner (Node 20.18.0). `npm run build` is `tsc --noEmit && vite build`. The `rolldown` native binding workaround from 0.2 was already in `node_modules`, and `package.json` and the lockfile were not changed by running these (the version lines were edited by hand). The Rust side of the desktop app (19 unit tests, clippy) is in the tables above.
 
-| Artefact | Path | Size (bytes) |
-|---|---|---|
-| App exe | `target/release/sealdrop-desktop.exe` | 13,198,336 (rebuilt at `10cf7bd` with `npx tauri build`) |
-| MSI installer | `target/release/bundle/msi/sealdrop_0.2.0_x64_en-US.msi` | 5,058,560 (rebuilt at `10cf7bd`) |
-| NSIS installer | `target/release/bundle/nsis/sealdrop_0.2.0_x64-setup.exe` | 3,586,397 (rebuilt at `10cf7bd`) |
-| CLI | `target/release/sealdrop.exe` | 4,893,184 |
-| Release service | `target/release/sealdrop-release.exe` | 4,624,384 |
+## RNG audit
 
-The installers were built but not installed. The app exe they ship was started directly (see "Desktop (real app)").
+Every random source in `crates/sealdrop-core/src` and `crates/sealdrop-release/src`, found with `grep -rnE "rand::rng\(\)|OsRng|rand_core06|getrandom|new_v4|generate_unencrypted_keypair|fill_bytes"` and checked against the dependency sources in the Cargo registry (`age` 0.12.1, `rand` 0.9.5, `rand_core` 0.6.4, `uuid` 1.28.0, `minisign` 0.10.0). Test-only call sites are not listed.
 
-## Desktop (real app)
+| Where | Source | Used for | On RNG failure |
+|---|---|---|---|
+| `age` 0.12.1, `keys.rs:21` (`new_file_key`) | `rand::rngs::OsRng` (rand 0.8, rand_core 0.6, getrandom 0.2) | the 16-byte age file key | panics: `rand_core-0.6.4/src/os.rs:61-65`, `fill_bytes` calls `try_fill_bytes` and panics on `Err` |
+| `age` 0.12.1, `native/x25519.rs:70`, `native/scrypt.rs:142`, `protocol.rs:31` | the same `OsRng` | X25519 identity generation and ephemeral keys, scrypt salt, payload nonce | panics, same code path |
+| `pq::Identity::generate`, `crates/sealdrop-core/src/pq.rs:108-110` | `rand_core06::OsRng.fill_bytes` | the 32-byte seed of a new `age1pq1…` identity | panics (same `OsRng`); the `expect("32 bytes")` on the next line is about the seed length, not randomness |
+| `pq::Recipient::wrap_file_key`, `pq.rs:90` | `rand_core06::OsRng` passed to `hpke_seal` | the ML-KEM-768 + X25519 encapsulation randomness | panics (same `OsRng`) |
+| `release::Deposit::new`, `crates/sealdrop-core/src/release.rs:131-132` | `rand::rng().fill_bytes` (rand 0.9) | the 32-byte release key and the 32-byte unlock token | panics: `ThreadRng` initialisation panics with "could not initialize ThreadRng" (`rand-0.9.5/src/rngs/thread.rs:123-124`) and reseeding panics with "Reseeding RNG failed" (`rand-0.9.5/src/rngs/reseeding.rs:217`) |
+| `release::Deposit::new`, `release.rs:134` | `uuid::Uuid::new_v4` (getrandom 0.4) | the release id | panics: "could not retrieve random bytes for uuid" (`uuid-1.28.0/src/rng.rs:57-59`) |
+| `release` stanza wrapping, `release.rs:211` | `rand::rng().fill_bytes` | the 12-byte nonce of the wrapped inner stanzas | panics (same `ThreadRng`) |
+| `argon2id::Recipient::wrap_file_key`, `crates/sealdrop-core/src/argon2id.rs:107` | `rand::rng().fill_bytes` | the Argon2id salt | panics (same `ThreadRng`) |
+| `passphrase::generate`, `crates/sealdrop-core/src/passphrase.rs:61` | `rand::rng()` with `random_range` | the generated EFF / BIP-39 words | panics (same `ThreadRng`) |
+| `seal.rs:324` | `uuid::Uuid::new_v4` | the package id | panics (same `uuid` code) |
+| `extract.rs:492` | `uuid::Uuid::new_v4` | a suffix for the `.old` backup folder name (not secret) | panics (same `uuid` code) |
+| `KeyStore::generate`, `crates/sealdrop-core/src/keys.rs:218` | `minisign::KeyPair::generate_unencrypted_keypair` (getrandom, `minisign-0.10.0/src/keypair.rs:31,34`) | the minisign signing key | returns `Err`, which `keys.rs:218-219` maps to `Error::KeyStore` and the caller reports; nothing is written after it |
+| `sealdrop-release keygen`, `crates/sealdrop-release/src/main.rs:92` | the same minisign call | the service signing key | returns `Err`, propagated with `?`, so the command exits non-zero before writing a key file |
+| `Db::create_token`, `crates/sealdrop-release/src/db.rs:55` | `rand::RngCore::fill_bytes(&mut rand::rng(), ...)` | the deposit token | panics (same `ThreadRng`) |
 
-Both runs used a throwaway key store (`SEALDROP_HOME` in the session scratchpad) and WebView2's DevTools port (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=...`), driven by a small Node script over CDP that calls the real Tauri commands through `window.__TAURI_INTERNALS__.invoke` and reads the rendered screen. Every process started was stopped by PID afterwards.
+No call site catches a randomness error, substitutes a default, or retries with a weaker source: where the library can return an error (minisign) it is propagated, and everywhere else the library panics, which stops the operation before any key or ciphertext that depended on it is written. The CLI and the desktop app both call these same functions. `grep` finds no use of `thread_rng`, a seeded RNG (`seed_from_u64`, `StdRng`) or a time-based value outside tests.
 
-### `npx tauri dev` against a real `sealdrop-release` on `127.0.0.1:8789`
+## Manual PQ session
 
-The dev log ends with `Running M:\Projects\sealdrop\target\debug\sealdrop-desktop.exe` and contains no `panic`. The CDP target was `http://localhost:1420/`, title `sealdrop`, with `__TAURI_INTERNALS__` present. Results (paths shortened, deposit token never printed):
-
-| Step | Result |
-|---|---|
-| `get_identity` on an empty key store | `exists: false` |
-| `generate_identity` | `exists: true`, recipient `age1k8e4j53m...`, signer `RWTzxNBT4hoZ...` |
-| `set_settings` (release service URL and deposit token) | ok |
-| `seal`, passphrase mode, timed release 600 s | ok: 2 files, passphrase of 6 words, 77.5 bits, `release.service = http://127.0.0.1:8789` |
-| `probe` on that package | `needs_passphrase: true`, `inner_kind: "scrypt"`, timed release shown |
-| `verify` | `ok: true`, `trusted_as: "self"`, recipients `[{kind: "scrypt"}]` |
-| `open_package` without the passphrase | error `this package needs a passphrase` |
-| `receipt_fetch` right after | `first_unlock: null`, `unlock_count: 0` (the failed open never reached the service) |
-| `open_package` with the passphrase, temp folder | ok: `...\Temp\sealdrop-view-aOhvyx\1\report-q3`, `remaining_secs: 600` |
-| `receipt_fetch` again | `unlock_count: 1`, `pinned: true` |
-| Open screen, package picked through the real UI | the passphrase field is shown; delivery record "Signature valid. Signed by you.", "Opens with a passphrase" |
-| `seal`, recipient mode (own recipient), no timer | ok |
-| `probe` | `needs_passphrase: false`, `inner_kind: "x25519"` |
-| `open_package` to a chosen folder | ok, files restored |
-| `open_package` to the temp folder | ok: `...\Temp\sealdrop-view-aOhvyx\2\report-q3` |
-| Close the window (`taskkill /PID`, no `/F`) | process gone; `Test-Path $env:TEMP\sealdrop-view-aOhvyx` is `False` |
-| Console errors seen over CDP | 0 |
-
-### Release exe
+Run with the built CLI through `cargo run -q -p sealdrop-cli --` (abbreviated `sealdrop` below). Two throwaway key stores were selected with `SEALDROP_HOME`: `<pq store>` and `<classic store>`, both in the session scratchpad. The input folder `in` holds `readme.txt` and `docs/q3.txt`. The identity files were never printed. The PQ recipient is cut to its first characters with `…`; the full public string was used on the command lines.
 
 ```
-started PID 21776 (target\release\sealdrop-desktop.exe, built by `npx tauri build`)
-alive after 10 s: True; responding: True; window title: 'sealdrop'
-CDP target: http://tauri.localhost/ | sealdrop
-isTauri: true
-get_identity: {"exists":true,"recipient":"age1k8e4j53mxl3x..."}
-page: "Seal\nLock a file or folder, sign it, and get a delivery record.\nIdentity ready\nWHAT TO SEND\n..."
-taskkill /PID 21776 -> process gone
-```
-
-## CLI closed-pipe check
-
-`seal --passphrase` is the exception (since `c9891fa`): the passphrase lines are printed first, and if they cannot be written the bundle is removed and the exit code is 1:
-
-```
-$ sealdrop seal in --passphrase --kdf-profile test -o out 2>err.txt | true; echo ${PIPESTATUS[0]}
-1
-error: passphrase could not be shown; package removed
-files left in out: 0
-$ sealdrop seal in --passphrase --kdf-profile test -o out2 | head -1
-passphrase: finer doornail dodge stimulate sublevel shrewdly
-```
-
-The other commands:
-
-```
-$ for i in $(seq 1 30); do ./target/debug/sealdrop recipient | true; ...; done
-30 runs of 'sealdrop recipient | true': nonzero exits=0
-$ ./target/debug/sealdrop recipient 2>err.txt | true      # new build
-new debug binary exit 0, stderr bytes: 0
-$ ./target/release/sealdrop.exe recipient | true          # binary built before the fix, for comparison
-old release binary exit 101
-thread 'main' (3164) panicked at ...\std\src\io\stdio.rs:1165:9:
-failed printing to stdout: The pipe is being closed. (os error 232)
-```
-
-## Manual timed-release session
-
-Recorded at `6913101`, before the fix wave (so it still shows the closed-pipe panic, since fixed, and lacks the retention sentence `seal` now prints for timed packages). CLI against the real `sealdrop-release` service on `127.0.0.1:8787`, built with `cargo build --release -p sealdrop-cli -p sealdrop-release`. Only the deposit token is redacted (`<token>`); the Windows temp directory is written as `$TEMP`. The keys and passphrase belong to a throwaway identity that was deleted afterwards. Times are UTC. The session ran as three scripts: setup through open (1), a plain-package interop check (2), and the open after expiry (3). The server stayed up between them (shell PID 1162, Windows PID 38468) and was killed afterwards.
-
-### 1. Keygen, serve, seal, verify, open, receipt, passphrase package
-
-```
-# started 18:37:30Z
-$ ./target/release/sealdrop-release keygen --dir $TEMP/sealdrop-rel
-service key: RWQz/y2hfkp+N3U5lpc4X1DRf8BUU7h4XYBsCdS+xnqEQeXZl7dVU1Xf
-[exit=0]
-store this token securely; it is shown once
-$ TOKEN=$(sealdrop-release token new alice --db $R/releases.db)   # value redacted -> <token>
-$ sealdrop-release serve --db $R/releases.db --dir $R --listen 127.0.0.1:8787 &   # PID 1162
-$ ./target/release/sealdrop keygen
-age15m80eks8a3ednhtxupcsc9klhlkuv9mrc2mnuvn833q7ccdc8qaswhnfxj
-RWQcskbnJFu1QW9biKXiHZW9pclL0FawnvJlCuDvZVuRidHGDEXSQreY
-identity written to $TEMP/sealdrop-home
+$ SEALDROP_HOME=<pq store> sealdrop keygen --pq
+age1pq1gtqs4znx26382ja9kv94q25x20emtug4te2ec3w5kwesw6rmwcs5fv6jwuuyvjw7xpq29ckfhjqxst392vfffgnzwez…
+RWTeSNsNPLZzY+yh2gEU6jJlobHcKPq4uGUQKyrZ1ksG1tf04OFG5t3n
+identity written to <pq store> (kind: pq)
+post-quantum identity: senders need sealdrop 0.3 or age 1.3 or newer
 share the first line (your recipient) with senders; the second is your signer key
 [exit=0]
-$ REC=$(sealdrop recipient | head -1)   # age15m80eks8a3ednhtxupcsc9klhlkuv9mrc2mnuvn833q7ccdc8qaswhnfxj
-$ ./target/release/sealdrop seal ./README.md -r age15m80eks8a3ednhtxupcsc9klhlkuv9mrc2mnuvn833q7ccdc8qaswhnfxj --expire-after 2m --release-service http://127.0.0.1:8787 -o $TEMP/sealdrop-b
-packing \\?\M:\Projects\sealdrop\README.md
-encrypted 3612 bytes
-contacting release service http://127.0.0.1:8787
-sealed: $TEMP/sealdrop-b\README.md.sealdrop.age
-manifest: $TEMP/sealdrop-b\README.md.manifest.json
-signature: $TEMP/sealdrop-b\README.md.manifest.json.minisig
-package id: 1e796c60-1ea9-4a16-b50b-4378679d497c
-ciphertext sha256: 69afeac58086a58b5d429533d3e5023faa7dba7d7610b4e9dd5c695cd4824d28
-Timed release: 2m after first open, enforced by http://127.0.0.1:8787
-This does not protect the contents once decrypted.
+
+$ SEALDROP_HOME=<classic store> sealdrop keygen
+age1ecz8607pe7q6asmk4zafnzc53j5cuqdpkdv89zylhur7n34c8a2qpm3qxy
+RWSWvmJ1lM7QPSFkBUg6Xp2SMDTzM1TAdBU5BG3sV114yJsyP+oN3rAO
+identity written to <classic store> (kind: x25519)
+share the first line (your recipient) with senders; the second is your signer key
 [exit=0]
-# sealed 18:37:33Z
-README.md.manifest.json
-README.md.manifest.json.minisig
-README.md.sealdrop.age
-$ ./target/release/sealdrop verify $TEMP/sealdrop-b/README.md.sealdrop.age
+
+$ SEALDROP_HOME=<classic store> sealdrop seal in -r age1pq1gtqs4znx26382ja9kv…  -o out
+packing \\?\...\pqsession\in
+encrypted 6886 bytes
+sealed: ...\pqsession\out\in.sealdrop.age
+manifest: ...\pqsession\out\in.manifest.json
+signature: ...\pqsession\out\in.manifest.json.minisig
+package id: 809d9548-d65c-4c8b-b481-387a3db018df
+post-quantum: yes
+note: your own identity is classical (x25519), so it was not added to this post-quantum package; create a post-quantum identity with `keygen --pq` to include yourself
+ciphertext sha256: 1c670d9b21473414bdd7d230b0f3c3af1066b0c4b261de7fe4ec116f4455d961
+[exit=0]
+
+$ SEALDROP_HOME=<classic store> sealdrop verify out/in.sealdrop.age
 OK: signature valid, ciphertext hash matches
-package id: 1e796c60-1ea9-4a16-b50b-4378679d497c
-signer: RWQcskbnJFu1QW9biKXiHZW9pclL0FawnvJlCuDvZVuRidHGDEXSQreY (self)
-created: 2026-10-13T18:37:33Z
-timed release: 2m after first open via http://127.0.0.1:8787
-recipient: x25519 dc66d60a95854b42
+package id: 809d9548-d65c-4c8b-b481-387a3db018df
+signer: RWSWvmJ1lM7QPSFkBUg6Xp2SMDTzM1TAdBU5BG3sV114yJsyP+oN3rAO (self)
+created: 2026-10-15T15:39:39Z
+post-quantum: yes
+recipient: pq 33d614989203d12f
 [exit=0]
-$ ./target/release/sealdrop open $TEMP/sealdrop-b/README.md.sealdrop.age -o $TEMP/sealdrop-r
-This package uses timed release: 2m after first open, enforced by http://127.0.0.1:8787
-Opening it starts or continues the window on the service's clock.
+
+$ grep -o '"key_commitment": *"[0-9a-f]\{8\}' out/in.manifest.json
+"key_commitment": "317c1cdf...
+```
+
+The first `open` with the PQ store failed because the receiver had not yet trusted the sender's signer key, which is the intended behaviour for an unknown signer:
+
+```
+$ SEALDROP_HOME=<pq store> sealdrop open out/in.sealdrop.age -o restored
 verifying manifest
-contacting release service http://127.0.0.1:8787
-extracting to $TEMP/sealdrop-r
-restored: $TEMP/sealdrop-r\README.md (1 files, 22 bytes)
-verified: signer RWQcskbnJFu1QW9biKXiHZW9pclL0FawnvJlCuDvZVuRidHGDEXSQreY (self)
-first opened 2026-10-13T18:37:33Z - expires 2026-10-13T18:39:33Z (service clock)
-Expiry applies to the encrypted package only; nothing can recall a file after it has been decrypted.
+error: verification failed: signer RWSWvmJ1lM7QPSFkBUg6Xp2SMDTzM1TAdBU5BG3sV114yJsyP+oN3rAO is not trusted; add it with `sealdrop trust add <name> RWSWvmJ1lM7QPSFkBUg6Xp2SMDTzM1TAdBU5BG3sV114yJsyP+oN3rAO` or pass --signer
+[exit=2]
+
+$ SEALDROP_HOME=<pq store> sealdrop trust add sender RWSWvmJ1lM7QPSFkBUg6Xp2SMDTzM1TAdBU5BG3sV114yJsyP+oN3rAO
+trusted sender
 [exit=0]
-$ ./target/release/sealdrop receipt fetch $TEMP/sealdrop-b/README.md.manifest.json
-release: 89be4b2d-74cf-41a9-9b3f-c224cbb540d5
-package sha256: 69afeac58086a58b5d429533d3e5023faa7dba7d7610b4e9dd5c695cd4824d28
-first opened: 2026-10-13T18:37:33Z (service clock), expires 2026-10-13T18:39:33Z
-unlock count: 1
-service key: RWQz/y2hfkp+N3U5lpc4X1DRf8BUU7h4XYBsCdS+xnqEQeXZl7dVU1Xf
-saved: $TEMP/sealdrop-b\README.md.receipt.json
+
+$ SEALDROP_HOME=<pq store> sealdrop open out/in.sealdrop.age -o restored
+verifying manifest
+extracting to ...\pqsession\restored
+restored: ...\pqsession\restored\in (2 files, 24 bytes)
+verified: signer RWSWvmJ1lM7QPSFkBUg6Xp2SMDTzM1TAdBU5BG3sV114yJsyP+oN3rAO (sender)
+post-quantum: yes
 [exit=0]
-$ ./target/release/sealdrop seal ./LICENSE --passphrase -o $TEMP/sealdrop-p
-packing \\?\M:\Projects\sealdrop\LICENSE
-encrypted 14518 bytes
-sealed: $TEMP/sealdrop-p\LICENSE.sealdrop.age
-manifest: $TEMP/sealdrop-p\LICENSE.manifest.json
-signature: $TEMP/sealdrop-p\LICENSE.manifest.json.minisig
-package id: b68f557f-11d6-474e-841c-98c602c485ce
-ciphertext sha256: d5333472d8c721ef8b555c995222dede577c1757ccf6f4d31480f665d1252258
-passphrase: willed recycler arson ripping baking custard
-entropy: 77.5 bits - send it on a different channel from the file
-[exit=0]
-$ age -d -i $SEALDROP_HOME/identity.txt README.md.sealdrop.age | tar -t | head
-tar: This does not look like a tar archive
-tar: Exiting with failure status due to previous errors
-[exit=1]
+$ find restored -type f; cat restored/in/docs/q3.txt
+restored/in/docs/q3.txt
+restored/in/readme.txt
+quarterly numbers
 ```
 
-The last command (stock `age -d | tar -t` against the timed-release package) failed. Timed-release packages wrap the key for the release service, so stock age cannot open them; the exact error is shown below. The interop line on a plain package follows.
-
-### 2. Stock age on a plain recipient package, and on the timed package
+Stock Go age on the same package, with the PQ store's identity file (`age` v1.3.2):
 
 ```
-
-thread 'main' (44436) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library\std\src\io\stdio.rs:1165:9:
-failed printing to stdout: The pipe is being closed. (os error 232)
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-# plain (non-timed) package for the stock-age interop line
-$ ./target/release/sealdrop seal ./LICENSE -r age15m80eks8a3ednhtxupcsc9klhlkuv9mrc2mnuvn833q7ccdc8qaswhnfxj -o $TEMP/sealdrop-c
-packing \\?\M:\Projects\sealdrop\LICENSE
-encrypted 14662 bytes
-sealed: $TEMP/sealdrop-c\LICENSE.sealdrop.age
-manifest: $TEMP/sealdrop-c\LICENSE.manifest.json
-signature: $TEMP/sealdrop-c\LICENSE.manifest.json.minisig
-package id: 7825e31c-4d46-4d53-bc4b-fd4f58b4b880
-ciphertext sha256: 622c5df9ec0a99cd5cad4dfd832413d2860faaaba93ea6a712c415a0c5f35130
-[exit=0]
-$ age -d -i $SEALDROP_HOME/identity.txt $TEMP/sealdrop-c/LICENSE.sealdrop.age | tar -t | head
+$ age -d -i <pq store>/identity.txt out/in.sealdrop.age | tar -t
 sealdrop/meta.json
-sealdrop/payload/LICENSE
+sealdrop/payload/in
+sealdrop/payload/in/docs
+sealdrop/payload/in/docs/q3.txt
+sealdrop/payload/in/readme.txt
 [exit=0]
-# and the same stock age against the timed-release package (by design it cannot open it)
-$ age -d -i $SEALDROP_HOME/identity.txt $TEMP/sealdrop-b/README.md.sealdrop.age | tar -t | head
-tar: This does not look like a tar archive
-tar: Exiting with failure status due to previous errors
-[age exit=1]
-# now 18:37:57Z
 ```
 
-The `thread 'main' panicked ... failed printing to stdout` message at the top came from `sealdrop recipient | head -1` in my script, where `head` closed the pipe. It is listed under the limitations.
-
-The exact stock-age error on the timed package, from a direct run to a file:
+The PQ-must-not-mix rule, from the same session:
 
 ```
-$ age -d -i $SEALDROP_HOME/identity.txt $TEMP/sealdrop-b/README.md.sealdrop.age > plain.bin
-age: error: no identity matched any of the recipients
-age: report unexpected or unhelpful errors at https://filippo.io/age/report
-exit=1
+$ SEALDROP_HOME=<classic store> sealdrop seal in -r <pq recipient> -r <classic recipient> --no-self -o out2
+error: policy refused: post-quantum recipients cannot be mixed with classical ones (classical: 90ce9a5173ad4db7); seal them separately
+[exit=3]
 ```
 
-### 3. Open after the window has closed (more than 2 minutes after first open)
+The passphrase prompt was not part of this session (stdin was not a terminal), so the hidden prompt itself was not exercised.
 
-```
-# now 18:39:46Z (> 2 minutes after first open at 18:37:33Z)
-$ sealdrop open $TEMP/sealdrop-b/README.md.sealdrop.age -o $TEMP/sealdrop-r2; echo "exit=$?"
-This package uses timed release: 2m after first open, enforced by http://127.0.0.1:8787
-Opening it starts or continues the window on the service's clock.
-verifying manifest
-contacting release service http://127.0.0.1:8787
-error: this package has expired at the release service and can no longer be opened
-exit=2
-```
+## Not re-run for 0.3
 
-Exit code 2 and the message "this package has expired at the release service and can no longer be opened". The output directory was not created: `ls $TEMP/sealdrop-r2` reported "No such file or directory". The brief mentions a 410; I did not capture the raw HTTP status, so I do not claim one here. The service log contained only its startup line (`sealdrop-release listening listen=127.0.0.1:8787`).
+These were validated for 0.2 and are recorded in `docs/VALIDATION.md` at tag v0.2.2. They were not repeated for this document, and nothing here should be read as a 0.3 result for them:
 
-## Screenshots
-
-Captured from the mock-mode dev server (`npm run dev`, `http://localhost:1420`) with `npx -y playwright@1 screenshot --viewport-size=1120,760 --wait-for-timeout=2500`. Each file is 1120x760 and above 20 KB. Each one was viewed. `seal-passphrase.png` and `open-timed.png` were regenerated at `10cf7bd` after the heading focus ring was removed and the passphrase tile moved first (with `--wait-for-timeout=1500` the Open capture still showed "Contacting…", so 2500 was used, as originally).
-
-| File | URL query | Size | What it shows |
-|---|---|---|---|
-| `docs/design/screenshots/seal.png` | `?screen=seal` | 167,454 B | Empty Seal form |
-| `docs/design/screenshots/seal-passphrase.png` | `?screen=seal&state=success` | 186,959 B | Passphrase words, QR and entropy line first, then the Sealed result; Sending it and Timed release tiles (including the retention sentence) on the right |
-| `docs/design/screenshots/open.png` | `?screen=open` | 73,412 B | Empty Open drop zone |
-| `docs/design/screenshots/open-timed.png` | `?screen=open&state=success` | 139,297 B | Opened package (no focus ring on "Opened."), "Contents match the signed record", countdown "9 m 41 s" |
-| `docs/design/screenshots/verify.png` | `?screen=verify&state=success` | 165,427 B | "Signature valid" result with signer and receipt check |
-| `docs/design/screenshots/keys.png` | `?screen=keys&state=success` | 182,456 B | Identity, trusted signers, receipts |
-| `docs/design/screenshots/settings.png` | `?screen=settings` | 202,361 B | Release service, Argon2id toggle, output, network, about |
-
-Every screen shows its intended state; none shows an error or an empty state where a success state was requested. The data is the mock data built into the front end, and the images are not of the packaged app.
-
-The README banner and the app icon are generated images in `docs/design/assets/` (`banner.png`, `icon.png`); its README records the Higgsfield job ids. The Tauri icon set in `apps/desktop/src-tauri/icons/` was regenerated from `icon.png` with `npx tauri icon`.
+- `cargo tauri build` (exe, MSI and NSIS installers) and the artefact sizes.
+- The real desktop runs over CDP (`npx tauri dev` against a real `sealdrop-release`, and the release exe), including the Keys and Seal screens with a post-quantum identity.
+- The manual CLI timed-release session against a live `sealdrop-release` (open before expiry exit 0, after expiry exit 2). Timed release is covered here only by the automated tests in the tables above (`sealdrop-release` `tests/service.rs` and `tests/cli.rs`, the `timed-release-*` spec vectors).
+- The seven screenshots in `docs/design/screenshots/`. The Keys-screen image is to be refreshed separately for the post-quantum identity badge.
+- Hardware keys: there is still no run against a physical key.
 
 ## Known limitations observed
 
-- **Node 20 workaround.** Node here is 20.18.0. Vite prints "Vite requires Node.js version 20.19+ or 22.12+", and the build needs `npm i --no-save --force @rolldown/binding-win32-x64-msvc` first. `package.json` and the lockfile were not changed. The build and the dev server worked despite the warning.
-- **Closed-pipe panic fixed.** `sealdrop recipient | head -1` (or `| true`) used to panic with exit 101; since `c9274f0` it exits 0 quietly (see "CLI closed-pipe check").
-- **Timed-release packages do not open in stock age.** The stock-age run above fails with "no identity matched any of the recipients". The Settings screen already says this ("Argon2id and timed release packages need sealdrop"). Recipient-mode packages are the ones the interop tests show opening in stock age; scrypt-mode is checked with the age crate only (the Go CLI cannot take a passphrase non-interactively).
-- **Passphrase prompt only partly exercised.** The CLI e2e test `timed_release_with_passphrase_prompts_and_never_unlocks_without_it` shows `open` prompting for a timed passphrase package (it reads stdin) and opening with `--passphrase-stdin`. A typed interactive passphrase at a real terminal was not tested; the help text says the prompt shows what you type.
-- **`cargo tauri build` warning.** `STATIC_VCRUNTIME is deprecated; use build.windows.staticVCRuntime in tauri.conf.json ...`. The build succeeded.
+- **Hidden passphrase prompt not exercised at a terminal.** `open` hides what you type when stdin is a terminal (`rpassword`, `crates/sealdrop-cli/src/commands/open.rs:176-181`) and reads one visible line otherwise (`open.rs:182`). The automated tests and this session use the non-terminal path; typing a passphrase at a real console was not tested.
+- **Timed-release packages do not open in stock age.** By design; stock age reports "no identity matched any of the recipients" (recorded in the 0.2 evidence).
+- **Case-insensitive destinations.** The refusal on open depends on probing the destination folder (`destination_is_case_insensitive`, `crates/sealdrop-core/src/extract.rs:374`). It is covered by unit tests; it was not run on a macOS volume.
+- **`age1tagpq1…` is encrypt-only.** There is no identity type for it, so sealdrop cannot open such packages.
+- **Node 20 workaround.** Node here is 20.18.0, below the 20.19 that Vite asks for. The build and `npm test` ran despite the warning.
 - **`cargo deny` warning.** The allow list has an unused entry (`Apache-2.0 WITH LLVM-exception`). The check still reports `advisories ok, licenses ok`.
-- **Screenshot cosmetics fixed.** The passphrase tile is now first (above the fold at 760 px) and programmatically focused headings carry `.no-ring`, so neither regenerated screenshot shows a focus ring.
-- **Installers not installed.** The dev app and the release exe were run (see "Desktop (real app)"); the MSI and NSIS installers themselves were built but not installed. The real-app run drove the commands over CDP and checked one screen (Open) in the real UI; the other screens were exercised in mock mode only. Argon2id sealing and the expired-window path were not repeated in the real app (both are covered by core and CLI tests).
+- **No external audit** of sealdrop, and no independent review of its ML-KEM-768 + X25519 code beyond the CCTV vectors and the Go age interop above.

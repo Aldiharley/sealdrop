@@ -11,7 +11,7 @@ Send sensitive files, sealed and signed.
 
 sealdrop is an open-source tool for sending a file or folder to someone and being able to prove what you sent. It wraps the [age](https://age-encryption.org) file format, adds a signed delivery record, and can optionally limit how long the recipient can open the package after they first open it. It comes as a command-line tool, a small key-release service, and a desktop app.
 
-Version 0.2. Licence: Apache-2.0.
+Version 0.3. Licence: Apache-2.0.
 
 ## Contents
 
@@ -33,8 +33,8 @@ Version 0.2. Licence: Apache-2.0.
 
 ## What it does
 
-- **Encrypts a file or folder with standard age.** The package is a tar stream inside an age v1 file, to one or more public-key recipients or to a generated passphrase. Output is binary, or ASCII armor with `--armor`.
-- **Signs a delivery record.** Each package comes with a `manifest.json` (hashes, recipients, signer, times) and a [minisign](https://jedisct1.github.io/minisign/) signature over it. The recipient can check both before decrypting anything.
+- **Encrypts a file or folder with standard age.** The package is a tar stream inside an age v1 file, to one or more public-key recipients (classical `age1…`, or post-quantum `age1pq1…`) or to a generated passphrase. Output is binary, or ASCII armor with `--armor`.
+- **Signs a delivery record.** Each package comes with a `manifest.json` (hashes, recipients, signer, times, and a `key_commitment` that binds the manifest to the package's file key) and a [minisign](https://jedisct1.github.io/minisign/) signature over it. The recipient can check both before decrypting anything, and `open` checks the key commitment before it writes any plaintext.
 - **Extracts defensively.** `open` refuses symlinks, path tricks, oversized archives and hash mismatches, and writes to a temporary folder that is renamed only on success.
 - **Generates passphrases for you.** There is no "choose a password" prompt. You get six EFF words (77.5 bits) or ten BIP-39 words (110 bits).
 - **Offers timed release.** A package can be sealed so it opens only within a window (seconds to days) after the recipient first opens it. A key-release service you host enforces this, and you get a signed receipt of the first open.
@@ -51,7 +51,7 @@ These are the non-goals from the [design spec](docs/superpowers/specs/2026-10-13
 
 ## Install
 
-**Windows binaries:** download from the [v0.2.2 release](https://github.com/Aldiharley/sealdrop/releases/tag/v0.2.2): the desktop app as an MSI or NSIS installer, and `sealdrop-0.2.2-windows-x86_64.zip` with `sealdrop.exe` (CLI) and `sealdrop-release.exe` (service). `SHA256SUMS` is alongside. The installers are not code-signed, so Windows SmartScreen warns on first run.
+**Windows binaries:** download from the [v0.2.2 release](https://github.com/Aldiharley/sealdrop/releases/tag/v0.2.2): the desktop app as an MSI or NSIS installer, and `sealdrop-0.2.2-windows-x86_64.zip` with `sealdrop.exe` (CLI) and `sealdrop-release.exe` (service). `SHA256SUMS` is alongside. The installers are not code-signed, so Windows SmartScreen warns on first run. 0.3.0 is on `main`; installers follow with the next release.
 
 Other platforms: build from source. You need a recent stable Rust toolchain (`rust-toolchain.toml` selects `stable`; the minimum is Rust 1.85).
 
@@ -75,7 +75,7 @@ cargo install tauri-cli --version "^2" --locked   # once
 cargo tauri build
 ```
 
-On Windows this produces an exe, an MSI and an NSIS installer under `target/release/` (see [docs/VALIDATION.md](docs/VALIDATION.md#desktop-build) for the paths and sizes of the 0.2 build). The published installers on the [Releases page](https://github.com/Aldiharley/sealdrop/releases) are these same artefacts, rebuilt from the tagged commit. In the 0.2 validation run the built exe was started and driven; the installers were not installed.
+On Windows this produces an exe, an MSI and an NSIS installer under `target/release/` (the paths and sizes of the 0.2 build are in `docs/VALIDATION.md` at the [v0.2.2 tag](https://github.com/Aldiharley/sealdrop/blob/v0.2.2/docs/VALIDATION.md#desktop-build)). The published installers on the [Releases page](https://github.com/Aldiharley/sealdrop/releases) are these same artefacts, rebuilt from the tagged commit. In the 0.2 validation run the built exe was started and driven; the installers were not installed.
 
 ## Quick start
 
@@ -91,7 +91,7 @@ identity written to <key store folder>
 share the first line (your recipient) with senders; the second is your signer key
 ```
 
-The first line is Bob's recipient. It is public. Bob sends it to Alice. Alice runs `sealdrop keygen` too, and sends Bob her signer key (the second line she gets) so Bob can check what she sends.
+The first line is Bob's recipient. It is public. Bob sends it to Alice. Alice runs `sealdrop keygen` too, and sends Bob her signer key (the second line she gets) so Bob can check what she sends. For data that must stay confidential for many years, Bob can run `sealdrop keygen --pq` instead: his recipient then starts with `age1pq1` and is long.
 
 **2. Alice seals a folder to Bob.**
 
@@ -147,7 +147,7 @@ verified: signer RWTRrN9xUsEDEAu1jg7CEcasioFsM1XHTTmQxDA8IbZ4zx+wPDwgSp27 (alice
 
 The app (Tauri 2, React 19) has five screens and calls the same Rust core as the CLI. It has no shell, HTTP or file-system plugin exposed to the web view: file access happens in Rust commands on paths you pick in native dialogs. Network access is limited to the release service you configure and the one named inside a timed package you open.
 
-The screenshots below are captures of the interface in mock mode (the front end running in a browser with built-in sample data, 1120 x 760). They are not captures of the packaged app, and sample paths such as `C:\Users\me\.sealdrop` are mock values. See [docs/VALIDATION.md](docs/VALIDATION.md#screenshots).
+The screenshots below are captures of the interface in mock mode (the front end running in a browser with built-in sample data, 1120 x 760). They are not captures of the packaged app, and sample paths such as `C:\Users\me\.sealdrop` are mock values. See `docs/VALIDATION.md` at the [v0.2.2 tag](https://github.com/Aldiharley/sealdrop/blob/v0.2.2/docs/VALIDATION.md#screenshots).
 
 **Seal.** Pick a file or folder, choose recipients or a generated passphrase, optionally switch on timed release, and get the package, manifest and signature.
 
@@ -214,7 +214,7 @@ sealed: outp\report-q3.sealdrop.age
 - The research behind this choice (entropy matters more than the key-derivation cost) is in [RESEARCH.md](RESEARCH.md).
 - The key derivation is age's scrypt at work factor 2^18 by default, 2^20 with `--kdf-profile high`. `open` refuses a package that asks for more than 2^22.
 - A passphrase package cannot also have recipient keys. sealdrop refuses the combination (exit code 3).
-- In 0.2 the interactive passphrase prompt on `open` shows what you type. Use `--passphrase-stdin` to pipe it in instead. Typing it into a real terminal prompt was not tested; see [VALIDATION.md](docs/VALIDATION.md#known-limitations-observed).
+- On a terminal, the passphrase prompt on `open` hides what you type. If stdin is not a terminal, `open` reads one visible line instead, and `--passphrase-stdin` does the same without a prompt. The hidden prompt was not exercised at a real terminal in the 0.3 validation run; see [VALIDATION.md](docs/VALIDATION.md#known-limitations-observed).
 
 ## Timed release
 
@@ -280,7 +280,7 @@ service key: RWT/0jEBoZ+uywcIWCELXX0lHZNjoKooOi0ffwGgCXrDWcpWoFGqsleP
 saved: outt\report-q3.receipt.json
 ```
 
-Opening after the window ends exits with code 2 and "this package has expired at the release service and can no longer be opened". That run is recorded in [docs/VALIDATION.md](docs/VALIDATION.md#manual-timed-release-session).
+Opening after the window ends exits with code 2 and "this package has expired at the release service and can no longer be opened". That run is recorded in `docs/VALIDATION.md` at the [v0.2.2 tag](https://github.com/Aldiharley/sealdrop/blob/v0.2.2/docs/VALIDATION.md#manual-timed-release-session).
 
 **Receipts are pinned to the service key.** When you seal, the service returns its public key, and sealdrop records it in the signed manifest as `release.service_key`. `receipt fetch` verifies the manifest before it sends your deposit token anywhere, and checks the receipt against that pinned key. `receipt verify --service-key <key>` does the same offline for a saved receipt.
 
@@ -330,6 +330,7 @@ age -d -i identity.txt report-q3.sealdrop.age | tar -x
 | Package | Opens with stock age? |
 |---|---|
 | Recipient mode (age1..., plugins) | Yes. Tested against Go age v1.3.2. |
+| Post-quantum recipient (`age1pq1...`) | Yes, with age 1.3 or newer. Tested against Go age v1.3.2 in both directions: stock age opens a sealdrop package, and sealdrop opens a file stock age wrote. |
 | Passphrase mode (scrypt) | Yes, by format. Tested with the age crate only: the Go CLI reads a passphrase only from a terminal, so the test cannot drive it. |
 | Argon2id passphrase | No, by design. |
 | Timed release | No, by design. Stock age fails with "no identity matched any of the recipients". |
@@ -354,16 +355,17 @@ Report a vulnerability as described in [SECURITY.md](SECURITY.md).
 4. Limits on entry count (default 100,000) and bytes (default 64 GiB).
 5. Files are written to a temporary folder, hashed as they are written, and compared with `meta.json`. Any mismatch deletes the folder.
 6. On success the folder is renamed. Existing files are never overwritten unless you pass `--overwrite`.
+7. Two paths that differ only by letter case (`A.txt` and `a.txt`) are refused when sealing, and refused when opening on a case-insensitive destination, so neither can silently replace the other.
+
+**Security level.** A sealdrop package is 128-bit secure against key search (age's file key is 16 bytes), the same level as TLS 1.3, Signal and WireGuard, with 256-bit ChaCha20-Poly1305 keys underneath. Post-quantum recipients protect the key wrap against a future quantum computer; the symmetric layer already resists one. The manifest's `key_commitment` ties the signed delivery record to the exact file key, and `open` checks it before any plaintext is written. The background is in [docs/research/2026-10-15-beyond-chacha20-poly1305.md](docs/research/2026-10-15-beyond-chacha20-poly1305.md).
 
 **Key store.** Keys are plain files you can inspect: `identity.txt` (age secret key), `sign.key` and `sign.pub` (minisign), and `trusted/<name>.pub`. They live in `%APPDATA%\sealdrop` on Windows and `~/.config/sealdrop` on Linux and macOS, with mode 0600 on Unix. Set `SEALDROP_HOME` to use another folder. Back up `identity.txt`: without it, packages sealed only to you cannot be opened.
 
 **Known limitations.**
-- **19 post-quantum conformance vectors are skipped.** Of the 147 C2SP CCTV age vectors, 128 pass, 19 are skipped and none fail. The skipped ones are the vectors for age's native post-quantum type (`age1pq1…`, ML-KEM-768 + X25519), which need an identity type that age 0.12 does not provide. Native `age1pq1…` keys (from `age-keygen -pq`) are not supported yet. sealdrop can encrypt *to* age's tagged hybrid type `age1tagpq1…` (ML-KEM-768 + P-256), but has no identity for it, so it cannot open such packages.
-- **Case-insensitive file systems.** A folder containing both `A.txt` and `a.txt`, sealed on Linux, loses one of them when opened on Windows or macOS.
+- **Post-quantum.** `keygen --pq` creates an `age1pq1…` identity (ML-KEM-768 + X25519, age 1.3's native type); packages sealed only to post-quantum recipients are marked `post-quantum: yes`. Post-quantum and classical recipients cannot be mixed in one package. `age1tagpq1…` (the tagged hybrid type) remains encrypt-only.
 - Timed release needs the service to be up at open time, and trusts the service host's clock.
-- The interactive passphrase prompt shows what you type (see [Passphrase mode](#passphrase-mode)).
 
-Test counts, the CCTV run, the manual timed-release session and the other limitations are in [docs/VALIDATION.md](docs/VALIDATION.md) (149 tests at the time of writing).
+Test counts, the CCTV run, the manual timed-release session and the other limitations are in [docs/VALIDATION.md](docs/VALIDATION.md) (193 tests at the time of writing).
 
 ## Command reference
 
@@ -371,7 +373,7 @@ Test counts, the CCTV run, the manual timed-release session and the other limita
 
 | Command | What it does |
 |---|---|
-| `keygen [--force]` | Create your age identity and minisign signing key. |
+| `keygen [--pq] [--force]` | Create your age identity (`--pq`: a post-quantum `age1pq1…` identity) and minisign signing key. |
 | `recipient` | Print your recipient string and signer key. |
 | `seal <INPUT>` | Encrypt a file or folder to recipients or a generated passphrase. |
 | `verify <PACKAGE>` | Check the signed manifest and ciphertext hash without decrypting. |
@@ -383,7 +385,7 @@ Main `seal` flags:
 
 | Flag | Meaning |
 |---|---|
-| `-r, --recipient <R>` | `age1...`, `age1tagpq1...` (hybrid post-quantum, encrypt-only) or `age1<plugin>1...`. Repeatable. Native `age1pq1...` keys are not supported yet. |
+| `-r, --recipient <R>` | `age1...`, `age1pq1...` (post-quantum), `age1tagpq1...` (hybrid, encrypt-only) or `age1<plugin>1...`. Repeatable. Post-quantum and classical recipients cannot be mixed (exit code 3). |
 | `--passphrase`, `--words eff\|bip39`, `--word-count N` | Generated passphrase. |
 | `--kdf-profile default\|high` | scrypt 2^18 or 2^20 (Argon2id `compat` or `desktop` profile with `--argon2id`). |
 | `--argon2id` | Non-standard stanza. Not openable in stock age. |
@@ -417,7 +419,7 @@ Run `sealdrop --help`, `sealdrop <command> --help` and `sealdrop-release --help`
 
 ## Roadmap
 
-Not in 0.2. These are deferred, not promised:
+Not in 0.3. These are deferred, not promised:
 
 - SLIP-39 k-of-n escrow
 - A hosted viewer
@@ -430,6 +432,7 @@ Not in 0.2. These are deferred, not promised:
 - A .NET shell
 - A Roughtime cross-check and an RFC 3161 countersignature of receipts
 - An `age-plugin-sealdrop` binary, so stock age could handle timed-release files
+- A hybrid Ed25519 + ML-DSA-65 manifest signature (`sealdrop-manifest/2`) and a payload v2 format (`sealdrop-encryption.org/v2`); the identifiers are reserved in the [format spec](spec/sealdrop-format-v1.md), the reasoning is in [docs/research/2026-10-15-beyond-chacha20-poly1305.md](docs/research/2026-10-15-beyond-chacha20-poly1305.md)
 
 ## Contributing, licence, credits
 
