@@ -273,10 +273,14 @@ fn unwrap_io(e: io::Error) -> Error {
     }
 }
 
-/// Directory components and full paths that collide under Unicode lowercase folding.
-/// Returns the first colliding pair as the full paths (earlier, later) that introduced the
-/// two spellings. Directories count:
-/// `r/sub/x` and `r/SUB/y` collide on the folder.
+/// Directory components and full paths that collide under Unicode case folding
+/// (uppercase, then lowercase, so `ς`/`σ`/`Σ` and `ϐ`/`β` fold together). Returns the
+/// first colliding pair as the full paths (earlier, later) that introduced the two
+/// spellings. Directories count: `r/sub/x` and `r/SUB/y` collide on the folder.
+///
+/// A lower bound: NTFS and APFS fold slightly more (and APFS is also
+/// normalisation-insensitive). Such collisions are not refused here, and the per-file hash
+/// check does not catch them (each file matches its own hash as written).
 pub fn case_collision<'a>(paths: impl Iterator<Item = &'a str>) -> Option<(String, String)> {
     // folded prefix -> (prefix as spelled, full path that introduced it)
     let mut seen: HashMap<String, (String, String)> = HashMap::new();
@@ -284,7 +288,7 @@ pub fn case_collision<'a>(paths: impl Iterator<Item = &'a str>) -> Option<(Strin
         let comps: Vec<&str> = p.split('/').collect();
         for i in 1..=comps.len() {
             let prefix = comps[..i].join("/");
-            let folded = prefix.to_lowercase();
+            let folded = prefix.to_uppercase().to_lowercase();
             match seen.get(&folded) {
                 Some((spelled, first)) if *spelled != prefix => {
                     return Some((first.clone(), p.to_string()))
@@ -299,22 +303,46 @@ pub fn case_collision<'a>(paths: impl Iterator<Item = &'a str>) -> Option<(Strin
     None
 }
 
-/// Creates `.sealdrop-case-probe-a` in `dir` and asks for `...-A`. Any error means "unknown",
-/// reported as case-sensitive (no refusal); the probe file is always removed.
+const CASE_PROBE_PREFIX: &str = ".sealdrop-case-probe-";
+
+/// Creates a uniquely named probe file `.sealdrop-case-probe-<random>` in `dir` and asks
+/// whether the same name with the case of its random letters swapped exists. The name is
+/// unpredictable, so a file planted in `dir` cannot steer the answer. Any error (the probe
+/// cannot be created, or three random suffixes had no ASCII letter) is reported as
+/// case-insensitive: fail closed, so colliding packages are refused. The probe file is
+/// removed when it goes out of scope.
 pub fn destination_is_case_insensitive(dir: &Path) -> bool {
-    let lower = dir.join(".sealdrop-case-probe-a");
-    let upper = dir.join(".sealdrop-case-probe-A");
-    let created = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lower)
-        .is_ok();
-    if !created {
-        return false;
+    for _ in 0..3 {
+        let Ok(probe) = tempfile::Builder::new()
+            .prefix(CASE_PROBE_PREFIX)
+            .tempfile_in(dir)
+        else {
+            return true;
+        };
+        let Some(suffix) = probe
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix(CASE_PROBE_PREFIX))
+        else {
+            return true;
+        };
+        if !suffix.bytes().any(|b| b.is_ascii_alphabetic()) {
+            continue;
+        }
+        let swapped: String = suffix
+            .chars()
+            .map(|c| {
+                if c.is_ascii_lowercase() {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        return fs::symlink_metadata(dir.join(format!("{CASE_PROBE_PREFIX}{swapped}"))).is_ok();
     }
-    let insensitive = fs::symlink_metadata(&upper).is_ok();
-    let _ = fs::remove_file(&lower);
-    insensitive
+    true
 }
 
 /// Extracts a sealdrop tar stream into `out_dir/<root>`, verifying every file hash.
@@ -565,6 +593,49 @@ mod tests {
         );
         // Unicode: Straße vs STRASSE do not collide under simple folding; ä vs Ä do.
         assert!(case_collision(["r/ä", "r/Ä"].into_iter()).is_some());
+        // Uppercase-then-lowercase folding: final and medial sigma, and the beta variant.
+        assert!(case_collision(["r/ας", "r/ασ"].into_iter()).is_some());
+        assert!(case_collision(["r/ς", "r/Σ"].into_iter()).is_some());
+        assert!(case_collision(["r/ϐ", "r/β"].into_iter()).is_some());
+    }
+
+    #[test]
+    fn probe_ignores_planted_fixed_name_probe_files() {
+        let d = tempfile::tempdir().unwrap();
+        // The pre-0.3 fixed probe names, planted to steer the answer.
+        std::fs::write(d.path().join(".sealdrop-case-probe-a"), b"").unwrap();
+        if !cfg!(windows) {
+            std::fs::write(d.path().join(".sealdrop-case-probe-A"), b"").unwrap();
+        }
+        let ci = destination_is_case_insensitive(d.path());
+        if cfg!(windows) {
+            assert!(ci);
+        }
+        if cfg!(target_os = "linux") {
+            assert!(!ci);
+        }
+        // Only the planted files remain.
+        let left = std::fs::read_dir(d.path()).unwrap().count();
+        assert_eq!(left, if cfg!(windows) { 1 } else { 2 });
+        // A colliding package is still refused where the destination folds case.
+        let tar = build_tar(&[("r/a.txt", b"1"), ("r/A.txt", b"2")]);
+        let r = extract(&tar[..], d.path(), &Limits::default(), false);
+        if cfg!(windows) {
+            assert!(
+                matches!(r, Err(Error::Extract(ExtractError::CaseCollision(_, _)))),
+                "{r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn probe_fails_closed_when_it_cannot_create_its_file() {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join("plain-file");
+        std::fs::write(&file, b"x").unwrap();
+        // A path under a regular file cannot hold a probe; neither can a missing folder.
+        assert!(destination_is_case_insensitive(&file.join("sub")));
+        assert!(destination_is_case_insensitive(&d.path().join("missing")));
     }
 
     #[test]

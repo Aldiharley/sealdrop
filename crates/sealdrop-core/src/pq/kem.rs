@@ -217,7 +217,7 @@ impl hpke::Kem for MlKem768X25519 {
         if sender_id_keypair.is_some() {
             return Err(HpkeError::EncapError);
         }
-        let (ct_pq, ss_pq) = pk_recip
+        let (ct_pq, mut ss_pq) = pk_recip
             .ek_pq
             .encapsulate(csprng)
             .map_err(|()| HpkeError::EncapError)?;
@@ -225,6 +225,7 @@ impl hpke::Kem for MlKem768X25519 {
         let ct_x = XPublic::from(&ek_x);
         let ss_x = ek_x.diffie_hellman(&pk_recip.pk_x);
         if !ss_x.was_contributory() {
+            ss_pq.zeroize();
             return Err(HpkeError::EncapError);
         }
         let ss = combine(
@@ -233,6 +234,8 @@ impl hpke::Kem for MlKem768X25519 {
             ct_x.as_bytes(),
             pk_recip.pk_x.as_bytes(),
         );
+        // The ML-KEM shared key is secret; only the combined output leaves this function.
+        ss_pq.zeroize();
         Ok((
             SharedSecret(ss),
             EncappedKey {
@@ -252,7 +255,7 @@ impl hpke::Kem for MlKem768X25519 {
             return Err(HpkeError::DecapError);
         }
         // ML-KEM uses implicit rejection: a bad ciphertext yields a random secret, not an error.
-        let ss_pq = sk_recip
+        let mut ss_pq = sk_recip
             .dk_pq
             .decapsulate(&encapped_key.ct_pq)
             .map_err(|()| HpkeError::DecapError)?;
@@ -261,6 +264,7 @@ impl hpke::Kem for MlKem768X25519 {
             .diffie_hellman(&XPublic::from(encapped_key.ct_x));
         // Low-order point: the all-zero secret is disallowed (CCTV `hybrid_low_order`).
         if !ss_x.was_contributory() {
+            ss_pq.zeroize();
             return Err(HpkeError::DecapError);
         }
         let ss = combine(
@@ -269,6 +273,7 @@ impl hpke::Kem for MlKem768X25519 {
             &encapped_key.ct_x,
             sk_recip.pk_x.as_bytes(),
         );
+        ss_pq.zeroize();
         Ok(SharedSecret(ss))
     }
 }

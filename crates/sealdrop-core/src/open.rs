@@ -21,8 +21,16 @@ pub struct VerifyReport {
     pub signer: String,
     pub trusted_as: Option<String>,
     pub ciphertext_ok: bool,
-    /// True when every recipient in the signed manifest is a post-quantum kind.
+    /// True when every recipient in the signed manifest is a post-quantum kind and the
+    /// package's own header agrees (see [`post_quantum_verdict`]).
     pub post_quantum: bool,
+}
+
+/// Spec 4: the post-quantum verdict combines the signed manifest with the header. A timed
+/// header hides its inner stanzas, so the manifest decides there; a plain header must
+/// itself be all-PQ, so a mixed header is never reported as post-quantum.
+pub fn post_quantum_verdict(manifest_pq: bool, header: &crate::probe::Probe) -> bool {
+    manifest_pq && (header.release.is_some() || header.post_quantum)
 }
 
 /// True when every recipient of the signed manifest is a post-quantum kind.
@@ -78,7 +86,8 @@ pub fn verify(store: &KeyStore, package: &Path, signer: Option<&str>) -> Result<
 
 /// Verification over an already-open package handle, so `open` can hash and decrypt the
 /// very same file (no window to swap the path between the check and the use). The handle
-/// is read from its current position to the end.
+/// is hashed from its current position to the end, then its header is re-read from the
+/// start; callers rewind before decrypting.
 fn verify_with(
     store: &KeyStore,
     package: &Path,
@@ -116,15 +125,33 @@ fn verify_with(
             "manifest ciphertext.file does not match the package file name".into(),
         ));
     }
-    let (sha, size) = crate::hashing::sha256_reader(file)?;
+    // Spec 5.4 step 7: a present key_commitment must be well formed, for `verify` as for
+    // `open`.
+    if let Some(c) = doc.key_commitment.as_deref() {
+        if crypt::parse_commitment(c).is_none() {
+            return Err(Error::Verify("manifest key_commitment is malformed".into()));
+        }
+    }
+    let (sha, size) = crate::hashing::sha256_reader(&mut *file)?;
     if sha != doc.ciphertext.sha256 || size != doc.ciphertext.size {
         return Err(Error::Verify(
             "ciphertext hash does not match the signed manifest".into(),
         ));
     }
+    // The header of the bytes just hashed. A header the probe cannot read is not reported
+    // as post-quantum.
+    file.seek(SeekFrom::Start(0))?;
+    let mut head = Vec::with_capacity(HEADER_MAX + 1);
+    (&mut *file)
+        .take(HEADER_MAX as u64 + 1)
+        .read_to_end(&mut head)?;
+    let manifest_pq = post_quantum_kinds(&doc.recipients);
+    let post_quantum = probe_bytes(&head)
+        .map(|p| post_quantum_verdict(manifest_pq, &p))
+        .unwrap_or(false);
     Ok(VerifyReport {
         signer: doc.signer.clone(),
-        post_quantum: post_quantum_kinds(&doc.recipients),
+        post_quantum,
         manifest: doc,
         trusted_as,
         ciphertext_ok: true,
@@ -791,6 +818,65 @@ mod tests {
             &NoProgress
         )
         .is_ok());
+    }
+
+    #[test]
+    fn verify_refuses_a_malformed_key_commitment() {
+        let (d, ks) = store();
+        let res = seal(
+            &ks,
+            req(
+                input(d.path()),
+                d.path().join("out"),
+                Mode::Recipients(vec![me(&ks)]),
+            ),
+            &NoProgress,
+        )
+        .unwrap();
+        let (mpath, spath) = bundle_paths(&res.package);
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&mpath).unwrap()).unwrap();
+        v["key_commitment"] = serde_json::json!("ABCD");
+        let text = serde_json::to_vec_pretty(&v).unwrap();
+        std::fs::write(&mpath, &text).unwrap();
+        let sig = crate::manifest::sign(
+            &text,
+            &ks.signing_key().unwrap(),
+            &ks.signing_public().unwrap(),
+            &res.manifest_doc.package_id,
+        )
+        .unwrap();
+        std::fs::write(&spath, sig.into_string()).unwrap();
+        let err = verify(&ks, &res.package, None).map(|_| ()).unwrap_err();
+        assert!(
+            matches!(err, Error::Verify(ref m) if m.contains("key_commitment")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn post_quantum_verdict_needs_the_header_to_agree() {
+        let probe = |post_quantum: bool, timed: bool| crate::probe::Probe {
+            armored: false,
+            tags: Vec::new(),
+            needs_passphrase: false,
+            release: timed.then(|| crate::probe::ReleaseArgs {
+                release_id: "r".into(),
+                service: "https://example.invalid".into(),
+                nonce_b64: String::new(),
+                unlock_token_b64: String::new(),
+            }),
+            post_quantum,
+        };
+        // Manifest PQ and an all-PQ header.
+        assert!(post_quantum_verdict(true, &probe(true, false)));
+        // Manifest PQ but the header carries a classical stanza.
+        assert!(!post_quantum_verdict(true, &probe(false, false)));
+        // Timed: the header hides the inner stanzas, the manifest decides.
+        assert!(post_quantum_verdict(true, &probe(false, true)));
+        // A classical manifest is never post-quantum.
+        assert!(!post_quantum_verdict(false, &probe(true, false)));
+        assert!(!post_quantum_verdict(false, &probe(false, true)));
     }
 
     fn fetch_set_token(f: &mut MemoryFetch, token: &str) {

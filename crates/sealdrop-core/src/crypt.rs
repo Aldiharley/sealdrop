@@ -11,8 +11,7 @@ use std::sync::{Arc, Mutex};
 use age::armor::{ArmoredReader, ArmoredWriter, Format};
 use age::secrecy::{ExposeSecret, SecretString};
 use age::stream::StreamWriter;
-use age_core::format::{FileKey, Stanza, FILE_KEY_BYTES};
-use zeroize::Zeroizing;
+use age_core::format::{FileKey, Stanza};
 
 use crate::hashing::sha256_hex;
 use crate::{Error, Result};
@@ -34,10 +33,28 @@ fn redact(s: &str) -> String {
 
 /// HRP of age's native post-quantum recipients.
 const PQ_RECIPIENT_HRP: &str = "age1pq";
+/// HRP of age's tagged hybrid (P-256 + ML-KEM) recipients.
+const TAGPQ_RECIPIENT_HRP: &str = "age1tagpq";
 
 /// The Bech32 human-readable part (the text before the last `1`), lowercased.
 fn bech32_hrp(s: &str) -> Option<String> {
     s.rfind('1').map(|i| s[..i].to_ascii_lowercase())
+}
+
+/// Parses `s` as a built-in recipient type owned by `hrp`. `Ok(None)` means `s` is not of
+/// that type; a string with exactly that HRP that fails to parse is an error, because
+/// falling through would parse it as a plugin named after the HRP and run any
+/// `age-plugin-<name>` on PATH.
+fn parse_owned_hrp<T>(
+    s: &str,
+    hrp: &str,
+    parse: impl FnOnce(&str) -> std::result::Result<T, ()>,
+) -> Result<Option<T>> {
+    match parse(s) {
+        Ok(r) => Ok(Some(r)),
+        Err(()) if bech32_hrp(s).as_deref() == Some(hrp) => Err(Error::InvalidRecipient(redact(s))),
+        Err(()) => Ok(None),
+    }
 }
 
 /// `Pq` and `Hybrid` are large (both hold an ML-KEM public key); kept unboxed to match
@@ -59,16 +76,18 @@ impl Recipient {
         if let Ok(r) = age::x25519::Recipient::from_str(s) {
             return Ok(Self::X25519(r));
         }
-        // `age1pq1…` is always the native PQ type. A malformed one is an error: falling
-        // through would parse it as plugin `pq` and run any `age-plugin-pq` on PATH.
-        match crate::pq::Recipient::from_str(s) {
-            Ok(r) => return Ok(Self::Pq(r)),
-            Err(_) if bech32_hrp(s).as_deref() == Some(PQ_RECIPIENT_HRP) => {
-                return Err(Error::InvalidRecipient(redact(s)));
-            }
-            Err(_) => {}
+        // `age1pq1…` and `age1tagpq1…` are always the built-in types. A malformed one is an
+        // error rather than a plugin lookup (`age-plugin-pq`, `age-plugin-tagpq`).
+        let pq = parse_owned_hrp(s, PQ_RECIPIENT_HRP, |s| {
+            crate::pq::Recipient::from_str(s).map_err(|_| ())
+        })?;
+        if let Some(r) = pq {
+            return Ok(Self::Pq(r));
         }
-        if let Ok(r) = age::tagpq::Recipient::from_str(s) {
+        let tagpq = parse_owned_hrp(s, TAGPQ_RECIPIENT_HRP, |s| {
+            age::tagpq::Recipient::from_str(s).map_err(|_| ())
+        })?;
+        if let Some(r) = tagpq {
             return Ok(Self::Hybrid(r));
         }
         if let Ok(r) = age::plugin::Recipient::from_str(s) {
@@ -196,32 +215,29 @@ pub fn parse_commitment(s: &str) -> Option<[u8; 32]> {
     v.try_into().ok()
 }
 
-type CapturedKey = Arc<Mutex<Option<Zeroizing<[u8; FILE_KEY_BYTES]>>>>;
+/// The commitment derived inside `wrap_file_key`. Public (it goes into the manifest), so
+/// no secret is retained once age has wrapped the file key.
+type CapturedCommitment = Arc<Mutex<Option<[u8; 32]>>>;
 
 /// Read side of a [`Committing`] recipient: stays usable after the recipient itself has
 /// been moved into the encryptor's recipient list.
 #[derive(Clone)]
-pub struct CommitmentHandle(CapturedKey);
+pub struct CommitmentHandle(CapturedCommitment);
 
 impl CommitmentHandle {
-    /// The hex `key_commitment` of the captured file key; `None` until age has called
+    /// The hex `key_commitment` of the file key age generated; `None` until age has called
     /// `wrap_file_key`.
     pub fn commitment_hex(&self) -> Option<String> {
         let g = self.0.lock().ok()?;
-        let fk = g.as_ref()?;
-        Some(hex::encode(age_core::primitives::hkdf(
-            &[],
-            COMMIT_INFO,
-            &fk[..],
-        )))
+        g.as_ref().map(hex::encode)
     }
 }
 
-/// Wraps the outer recipient list so `seal` can learn the file key age generated.
-/// Replicates age's label rule, because age only sees this one recipient.
+/// Wraps the outer recipient list so `seal` can learn the commitment to the file key age
+/// generated. Replicates age's label rule, because age only sees this one recipient.
 pub struct Committing {
     inner: Vec<Box<dyn age::Recipient + Send>>,
-    captured: CapturedKey,
+    captured: CapturedCommitment,
 }
 
 impl Committing {
@@ -232,7 +248,7 @@ impl Committing {
         }
     }
 
-    /// A shared reader of the captured key, to take before boxing this recipient.
+    /// A shared reader of the captured commitment, to take before boxing this recipient.
     pub fn handle(&self) -> CommitmentHandle {
         CommitmentHandle(Arc::clone(&self.captured))
     }
@@ -267,9 +283,9 @@ impl age::Recipient for Committing {
             return Err(age::EncryptError::MissingRecipients);
         }
         let mut g = self.captured.lock().map_err(|_| {
-            age::EncryptError::Io(std::io::Error::other("file key capture lock poisoned"))
+            age::EncryptError::Io(std::io::Error::other("commitment capture lock poisoned"))
         })?;
-        *g = Some(Zeroizing::new(*file_key.expose_secret()));
+        *g = Some(key_commitment(file_key));
         Ok((stanzas, labels.unwrap_or_default()))
     }
 }
@@ -462,6 +478,22 @@ mod tests {
         bytes[n - 32..].fill(0);
         let low_order = age_core::primitives::bech32_encode(hrp, &bytes);
         for s in [short.clone(), short.to_uppercase(), low_order] {
+            match Recipient::parse(&s) {
+                Err(Error::InvalidRecipient(_)) => {}
+                other => panic!(
+                    "expected InvalidRecipient, got {:?}",
+                    other.map(|r| r.kind())
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_tagpq_recipient_is_an_error_not_a_plugin() {
+        let hrp = bech32::Hrp::parse("age1tagpq").unwrap();
+        // Checksum-valid, but a 32-byte payload instead of a P-256 + ML-KEM key.
+        let short = age_core::primitives::bech32_encode(hrp, &[7u8; 32]);
+        for s in [short.clone(), short.to_uppercase()] {
             match Recipient::parse(&s) {
                 Err(Error::InvalidRecipient(_)) => {}
                 other => panic!(
