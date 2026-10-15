@@ -18,13 +18,12 @@ use sha3::{
 use x25519_dalek::{PublicKey as XPublic, StaticSecret};
 
 /// X-Wing label `\.//^\`.
-const LABEL: &[u8] = b"\\.//^\\";
+const XWING_LABEL: &[u8] = b"\\.//^\\";
 type KemNct = <MlKem768 as KemCore>::CiphertextSize; // 1088
 type KemNek = <<MlKem768 as KemCore>::EncapsulationKey as EncodedSizeUser>::EncodedSize; // 1184
 
 pub(crate) struct Expanded {
     pub dk_pq: <MlKem768 as KemCore>::DecapsulationKey,
-    pub ek_pq: <MlKem768 as KemCore>::EncapsulationKey,
     pub sk_x: StaticSecret,
     pub pk_x: XPublic,
 }
@@ -40,19 +39,14 @@ pub(crate) fn expand_seed(seed: &[u8; 32]) -> Expanded {
     d.copy_from_slice(&out[..32]);
     z.copy_from_slice(&out[32..64]);
     x.copy_from_slice(&out[64..]);
-    let (dk_pq, ek_pq) = MlKem768::generate_deterministic(&d.into(), &z.into());
+    let (dk_pq, _) = MlKem768::generate_deterministic(&d.into(), &z.into());
     let sk_x = StaticSecret::from(x);
     let pk_x = XPublic::from(&sk_x);
     out.zeroize();
     d.zeroize();
     z.zeroize();
     x.zeroize();
-    Expanded {
-        dk_pq,
-        ek_pq,
-        sk_x,
-        pk_x,
-    }
+    Expanded { dk_pq, sk_x, pk_x }
 }
 
 #[derive(Clone)]
@@ -210,7 +204,10 @@ impl hpke::Kem for MlKem768X25519 {
         sender_id_keypair: Option<(&Self::PrivateKey, &Self::PublicKey)>,
         csprng: &mut R,
     ) -> Result<(SharedSecret<Self>, Self::EncappedKey), HpkeError> {
-        assert!(sender_id_keypair.is_none(), "auth mode is not used by age");
+        // Auth mode is not used by age.
+        if sender_id_keypair.is_some() {
+            return Err(HpkeError::EncapError);
+        }
         let (ct_pq, ss_pq) = pk_recip
             .ek_pq
             .encapsulate(csprng)
@@ -241,7 +238,10 @@ impl hpke::Kem for MlKem768X25519 {
         pk_sender_id: Option<&Self::PublicKey>,
         encapped_key: &Self::EncappedKey,
     ) -> Result<SharedSecret<Self>, HpkeError> {
-        assert!(pk_sender_id.is_none(), "auth mode is not used by age");
+        // Auth mode is not used by age.
+        if pk_sender_id.is_some() {
+            return Err(HpkeError::DecapError);
+        }
         // ML-KEM uses implicit rejection: a bad ciphertext yields a random secret, not an error.
         let ss_pq = sk_recip
             .dk_pq
@@ -271,7 +271,7 @@ fn combine(ss_pq: &[u8], ss_x: &[u8], ct_x: &[u8], pk_x: &[u8]) -> sha3::digest:
     h.update(ss_x);
     h.update(ct_x);
     h.update(pk_x);
-    h.update(LABEL);
+    h.update(XWING_LABEL);
     h.finalize_fixed()
 }
 
@@ -321,6 +321,18 @@ mod tests {
         }
         let bad = EncappedKey::from_bytes(&bytes).unwrap();
         assert!(MlKem768X25519::decap(&sk, None, &bad).is_err());
+    }
+
+    #[test]
+    fn all_zero_x25519_public_key_fails_encap() {
+        let (_, pk) = MlKem768X25519::gen_keypair(&mut OsRng);
+        let mut bytes = pk.to_bytes().to_vec();
+        // pk_x is the last 32 bytes; the all-zero point gives a non-contributory secret.
+        for b in &mut bytes[1184..] {
+            *b = 0;
+        }
+        let bad = PublicKey::from_bytes(&bytes).unwrap();
+        assert!(MlKem768X25519::encap(&bad, None, &mut OsRng).is_err());
     }
 
     #[test]

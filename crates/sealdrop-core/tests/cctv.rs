@@ -71,35 +71,19 @@ fn all_cctv_vectors() {
         names.len()
     );
     let mut failures = Vec::new();
-    let mut skipped: Vec<String> = Vec::new();
     let mut passed = 0usize;
     for path in &names {
         let v = load(path);
         assert!(!v.expect.is_empty(), "{}: vector without expect", v.name);
         let mut ids: Vec<Box<dyn age::Identity>> = Vec::new();
-        let mut unsupported = false;
         for i in &v.identities {
-            match age::x25519::Identity::from_str(i) {
-                Ok(id) => ids.push(Box::new(id)),
-                // age 0.12.1 has no hybrid (ML-KEM-768 + X25519) identity type
-                // (`age::tagpq` only exposes a Recipient), so these vectors cannot be run.
-                Err(_) => unsupported = true,
+            if let Ok(id) = age::x25519::Identity::from_str(i) {
+                ids.push(Box::new(id));
+            } else if let Ok(id) = sealdrop_core::pq::Identity::from_str(i) {
+                ids.push(Box::new(id));
+            } else {
+                panic!("{}: identity line of unknown type", v.name);
             }
-        }
-        if unsupported {
-            // Only hybrid vectors may be skipped; anything else is a parse bug in this test.
-            assert!(
-                v.name.starts_with("hybrid")
-                    || v.name.starts_with("armor_hybrid")
-                    || v.identities.iter().any(|i| i.contains("AGE-SECRET-KEY-PQ")),
-                "{}: skipped but not a hybrid vector",
-                v.name
-            );
-            skipped.push(format!(
-                "{} (expect={}): identity type not supported by age 0.12.1: {}",
-                v.name, v.expect, v.comment
-            ));
-            continue;
         }
         for p in &v.passphrases {
             ids.push(Box::new(scrypt_identity(SecretString::from(p.clone()))));
@@ -159,24 +143,16 @@ fn all_cctv_vectors() {
             ));
         }
     }
-    println!(
-        "CCTV: total={} passed={} skipped={} failed={}",
+    eprintln!(
+        "CCTV: total={} passed={} failed={}",
         names.len(),
         passed,
-        skipped.len(),
         failures.len()
     );
-    for s in &skipped {
-        println!("SKIPPED {s}");
-    }
     assert!(
         failures.is_empty(),
         "CCTV failures:\n{}",
         failures.join("\n")
     );
-    assert_eq!(
-        passed + skipped.len(),
-        names.len(),
-        "every vector must be either passed or skipped"
-    );
+    assert_eq!(passed, names.len());
 }
