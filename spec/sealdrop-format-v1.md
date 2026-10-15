@@ -242,6 +242,9 @@ post-quantum one hands the file key to whoever can break the classical stanza la
 MUST still open such a header (age semantics; CCTV `hybrid_and_x25519`), and MUST report the
 package as not post-quantum. A package is *post-quantum* when every real recipient is of a
 post-quantum kind (for a timed package, every inner recipient recorded in the manifest).
+A decoder that reports this from a verified manifest MUST also check the header: a plain
+header must itself carry only post-quantum stanzas (grease aside), while a timed header hides
+its inner stanzas, so there the manifest decides.
 
 The reference's age library (Rust `age` 0.12) appends one random `*-grease` stanza to every
 header that has no `scrypt` stanza. Where this document says a stanza MUST "stand alone", grease
@@ -530,7 +533,10 @@ failure stops the process with a verification error.
 7. After decryption has unwrapped the file key and before any payload is decrypted: if
    `key_commitment` is present, derive it from the unwrapped file key and compare in constant
    time. A mismatch is a verification failure; no plaintext may be written. When the field is
-   absent, or verification was skipped (§5.5), there is nothing to check.
+   absent, or verification was skipped (§5.5), there is nothing to check. A present value that
+   is not exactly 64 lowercase hexadecimal characters is a verification failure. For a timed
+   package the file key exists only after the unlock, so the release service is contacted,
+   and the window started, before the commitment can be checked.
 
 Decoders MAY also compare the SHA-256 of the decrypted container with `plaintext_tar_sha256`;
 the reference does not.
@@ -835,9 +841,12 @@ integrity-only check if it labels the result as not pinned.
   decoder that compares `plaintext_tar_sha256` can show which plaintext it obtained. From 0.3.0
   the manifest also commits to the file key (`key_commitment`), so a verified package has
   exactly one file key that opens it, closing the stanza-level non-commitment.
-- **Security level.** age's file key is 16 bytes, so every sealdrop package is 128-bit secure
-  against key search whichever 256-bit AEAD encrypts the bytes. This is the level of TLS 1.3,
-  Signal and WireGuard. Say "128-bit security level, 256-bit keys", not "256-bit encryption".
+- **Security level.** age's file key is 16 bytes, so the security level is at most 128 bits
+  against key search whichever 256-bit AEAD encrypts the bytes. A package sealed to recipients
+  reaches that level, the level of TLS 1.3, Signal and WireGuard: say "128-bit security level,
+  256-bit keys", not "256-bit encryption". A passphrase package is bounded by the passphrase's
+  entropy plus the KDF cost (see the Argon2id bullet below): six random EFF words give about
+  77.5 bits, plus about 2^18 work per guess at scrypt log2 N = 18.
 - **Harvest now, decrypt later.** `x25519` and plugin stanzas can be opened retroactively by a
   future quantum computer; `pq` and `hybrid-pq` stanzas cannot (unless the hybrid's both parts
   fail). Packages that must stay confidential beyond about 2035 SHOULD be sealed to
@@ -864,9 +873,13 @@ integrity-only check if it labels the result as not pinned.
   the second would be written over the first. Decoders on case-insensitive file systems SHOULD
   reject packages whose paths, directory prefixes included, collide when compared
   case-insensitively, before writing anything. From 0.3.0 the reference does so: it probes
-  whether the destination folder is case-insensitive and then compares Unicode lowercase
-  foldings (Appendix C, row e). Its encoder refuses such inputs on every platform, so its own
-  packages never collide.
+  whether the destination folder is case-insensitive and then compares Unicode case foldings
+  (uppercase, then lowercase; Appendix C, row e). Its encoder refuses such inputs on every
+  platform, so its own packages never collide. This folding is a lower bound: NTFS and APFS
+  fold slightly more, and APFS is also normalisation-insensitive, so collisions outside simple
+  case folding are not refused up front. The per-file hash check (§6.2) does not catch them
+  either, since each file matches its own listed hash as it is written: on such a file system
+  the later file replaces the earlier one.
 - **Signer keys.** The manifest names its signer but does not authenticate it. Recipients
   SHOULD confirm a signer key out of band before trusting it.
 - **Unverified opening.** When verification is skipped (§5.5), header values reach the network
@@ -993,7 +1006,7 @@ Paths are relative to the repository root. Core = `crates/sealdrop-core/src/`, s
 | §3.5 encoder checks | core `pack.rs` | `check_portable`, `utf8_name`, `plan`, `write_plan` |
 | §4 recipients, kinds, fingerprints | core `crypt.rs` | `Recipient::{parse, kind, fingerprint}`, `to_age_recipients` |
 | §4 `pq` recipients and identities | core `pq.rs` | `Recipient`, `Identity`, `is_pq_stanza_tag` |
-| §4 post-quantum kinds, mixing rule | core `policy.rs`; core `open.rs`; core `seal.rs` | `check_recipients`, `is_post_quantum_kind`; `post_quantum_kinds`; `seal` (self-omission) |
+| §4 post-quantum kinds, mixing rule | core `policy.rs`; core `open.rs`; core `seal.rs` | `check_recipients`, `is_post_quantum_kind`; `post_quantum_kinds`, `post_quantum_verdict`; `seal` (self-omission) |
 | §4 armor, leading whitespace | core `crypt.rs` | `encrypt_writer`, `decrypt_reader`, `SkipLeadingWhitespace` |
 | §4 scrypt bounds | core `crypt.rs` | `scrypt_recipient`, `scrypt_identity`, `SCRYPT_MAX_DECRYPT_LOG_N` |
 | §4 header size | core `probe.rs` | `probe_bytes`, `HEADER_MAX` |
@@ -1066,4 +1079,4 @@ lacked the encoder checks of §3.3 and §6; the format itself is unchanged.)
 | b | §4.1 decoding step 4 (`t`, `m_kib`, `p` are plain decimal integers) | The parser also accepts a leading `+` and leading zeros. The reference encoder never writes them. |
 | c | §4.1 and §4.2 stand-alone rules (decoder side) | The decoder does not reject a header that has other real stanzas next to a `sealdrop-argon2id` or `sealdrop-release` stanza; only the encoder enforces the rule (through age's label sets). |
 | d | §3.5 every listed file written exactly once (decoder side) | The decoder does not reject a file entry that appears twice: each occurrence is verified against `meta.json` in turn and the last one is kept (§6.2). |
-| e | §9 case-insensitive file systems | Detection probes the destination folder; a destination on a different, case-insensitive volume than the probe cannot occur because the temp dir is created inside it, but network file systems may answer the probe inconsistently. |
+| e | §9 case-insensitive file systems | Detection probes the destination folder with a uniquely named file; if the probe cannot be made the folder is treated as case-insensitive. A destination on a different, case-insensitive volume than the probe cannot occur because the temp dir is created inside it, but network file systems may answer the probe inconsistently. The folding is simple case folding, a lower bound of what NTFS and APFS fold. |

@@ -16,6 +16,7 @@ You will get an acknowledgement within a few days. This is a small open-source p
 | Version | Supported |
 |---|---|
 | 0.3.x | Yes |
+| 0.2.x | 0.2.2 supported until the 0.3.0 release ships |
 | Earlier | No |
 
 ## Scope
@@ -42,7 +43,7 @@ Out of scope:
 
 These are documented and are not vulnerabilities: see [Security in the README](README.md#security) and [docs/VALIDATION.md](docs/VALIDATION.md).
 
-- **Security level.** A sealdrop package is 128-bit secure against key search, because age's file key is 16 bytes. That is the same level as TLS 1.3, Signal and WireGuard. The symmetric layer is not what a quantum computer would break: Grover's quadratic speed-up leaves a 128-bit level at roughly 2^64 quantum operations, performed serially under depth limits that NIST and ANSSI consider out of reach, so no symmetric change is needed. The quantum exposure is the classical key wrap (X25519 and the plugin recipients).
+- **Security level.** The security level is at most 128 bits against key search, because age's file key is 16 bytes. A package sealed to recipients reaches it (128-bit security level, 256-bit keys), the same level as TLS 1.3, Signal and WireGuard. A passphrase package is bounded by the passphrase's entropy plus the key-derivation cost instead (see [Passphrase mode](README.md#passphrase-mode) and the spec's §9 Argon2id bullet): six EFF words give about 77.5 bits, plus about 2^18 scrypt work per guess. The symmetric layer is not what a quantum computer would break: Grover's quadratic speed-up leaves a 128-bit level at roughly 2^64 quantum operations, performed serially under depth limits that NIST and ANSSI consider out of reach, so no symmetric change is needed. The quantum exposure is the classical key wrap (X25519 and the plugin recipients).
 - **Post-quantum recipients.** For data that must stay confidential beyond about 2035, seal to post-quantum recipients (`keygen --pq`, `age1pq1…`, ML-KEM-768 + X25519). A package sealed to a classical recipient can be recorded now and opened later if X25519 is broken. Post-quantum and classical recipients cannot be mixed in one package, so a classical recipient never weakens a post-quantum package. `age1tagpq1…` remains encrypt-only.
 - **Key commitment.** From 0.3.0 the signed manifest commits to the package's file key (`key_commitment`), and, when the manifest is verified, `open` checks it before any plaintext is written. Packages made by 0.2.x and earlier have no commitment and still open; for them the manifest is not bound to the file key.
 - **No external audit.** sealdrop has not been audited. Its ML-KEM-768 + X25519 code is checked against the C2SP CCTV age vectors (147 of 147) and against Go age 1.3.2 in both directions, which is conformance evidence, not a review.

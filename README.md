@@ -91,7 +91,7 @@ identity written to <key store folder>
 share the first line (your recipient) with senders; the second is your signer key
 ```
 
-The first line is Bob's recipient. It is public. Bob sends it to Alice. Alice runs `sealdrop keygen` too, and sends Bob her signer key (the second line she gets) so Bob can check what she sends. For data that must stay confidential for many years, Bob can run `sealdrop keygen --pq` instead: his recipient then starts with `age1pq1` and is long.
+The first line is Bob's recipient. It is public. Bob sends it to Alice. Alice runs `sealdrop keygen` too, and sends Bob her signer key (the second line she gets) so Bob can check what she sends. For data that must stay confidential for many years, Bob can run `sealdrop keygen --pq` instead: his recipient then starts with `age1pq1` and is long. Later, `sealdrop recipient` prints the same two lines and a third, `kind: x25519` or `kind: pq`.
 
 **2. Alice seals a folder to Bob.**
 
@@ -355,17 +355,18 @@ Report a vulnerability as described in [SECURITY.md](SECURITY.md).
 4. Limits on entry count (default 100,000) and bytes (default 64 GiB).
 5. Files are written to a temporary folder, hashed as they are written, and compared with `meta.json`. Any mismatch deletes the folder.
 6. On success the folder is renamed. Existing files are never overwritten unless you pass `--overwrite`.
-7. Two paths that differ only by letter case (`A.txt` and `a.txt`) are refused when sealing, and refused when opening on a case-insensitive destination, so neither can silently replace the other.
+7. Two paths that differ only by letter case (`A.txt` and `a.txt`) are refused when sealing, and refused when opening on a case-insensitive destination (or one whose case behaviour cannot be probed), so neither can silently replace the other. The comparison uses simple Unicode case folding, which is a lower bound: NTFS and APFS fold slightly more, and APFS also ignores Unicode normalisation, so two names that collide only under those extra rules are not refused up front, and the per-file hash check does not catch them either (the later file replaces the earlier one).
 
-**Security level.** A sealdrop package is 128-bit secure against key search (age's file key is 16 bytes), the same level as TLS 1.3, Signal and WireGuard, with 256-bit ChaCha20-Poly1305 keys underneath. Post-quantum recipients protect the key wrap against a future quantum computer; the symmetric layer already resists one. The manifest's `key_commitment` ties the signed delivery record to the exact file key, and when the manifest is verified, `open` checks it before any plaintext is written (with `--skip-verify`, or with no manifest, there is nothing to check). The background is in [docs/research/2026-10-15-beyond-chacha20-poly1305.md](docs/research/2026-10-15-beyond-chacha20-poly1305.md).
+**Security level.** The security level is at most 128 bits against key search, because age's file key is 16 bytes. A package sealed to recipients reaches it: a 128-bit security level, 256-bit keys (ChaCha20-Poly1305 underneath), the same level as TLS 1.3, Signal and WireGuard. A passphrase package is bounded by the passphrase's entropy plus the key-derivation cost instead (see [Passphrase mode](#passphrase-mode) and spec §9, Argon2id): six EFF words give about 77.5 bits, plus about 2^18 scrypt work per guess. Post-quantum recipients protect the key wrap against a future quantum computer; the symmetric layer already resists one. The manifest's `key_commitment` ties the signed delivery record to the exact file key, and when the manifest is verified, `open` checks it before any plaintext is written (with `--skip-verify`, or with no manifest, there is nothing to check). The background is in [docs/research/2026-10-15-beyond-chacha20-poly1305.md](docs/research/2026-10-15-beyond-chacha20-poly1305.md).
 
 **Key store.** Keys are plain files you can inspect: `identity.txt` (age secret key), `sign.key` and `sign.pub` (minisign), and `trusted/<name>.pub`. They live in `%APPDATA%\sealdrop` on Windows and `~/.config/sealdrop` on Linux and macOS, with mode 0600 on Unix. Set `SEALDROP_HOME` to use another folder. Back up `identity.txt`: without it, packages sealed only to you cannot be opened.
 
 **Known limitations.**
 - **Post-quantum.** `keygen --pq` creates an `age1pq1…` identity (ML-KEM-768 + X25519, age 1.3's native type); packages sealed only to post-quantum recipients are marked `post-quantum: yes`. Post-quantum and classical recipients cannot be mixed in one package. `age1tagpq1…` (the tagged hybrid type) remains encrypt-only.
+- **Moving to a post-quantum identity.** The key store holds exactly one native identity line. `keygen --pq --force` (or Replace in the app) deletes the X25519 key, and replaces the signing key too, so packages sealed to the old recipient can no longer be opened from this store. Keep a backup of the old `identity.txt` first, or create the new identity in a second store by pointing `SEALDROP_HOME` at another folder.
 - Timed release needs the service to be up at open time, and trusts the service host's clock.
 
-Test counts, the CCTV run, the manual timed-release session and the other limitations are in [docs/VALIDATION.md](docs/VALIDATION.md) (193 tests at the time of writing).
+Test counts, the CCTV run, the manual timed-release session and the other limitations are in [docs/VALIDATION.md](docs/VALIDATION.md) (198 tests at the time of writing).
 
 ## Command reference
 
@@ -374,7 +375,7 @@ Test counts, the CCTV run, the manual timed-release session and the other limita
 | Command | What it does |
 |---|---|
 | `keygen [--pq] [--force]` | Create your age identity (`--pq`: a post-quantum `age1pq1…` identity) and minisign signing key. |
-| `recipient` | Print your recipient string and signer key. |
+| `recipient` | Print your recipient string, your signer key and a third line `kind: x25519` or `kind: pq`. |
 | `seal <INPUT>` | Encrypt a file or folder to recipients or a generated passphrase. |
 | `verify <PACKAGE>` | Check the signed manifest and ciphertext hash without decrypting. |
 | `open <PACKAGE>` | Verify, decrypt and extract safely. |

@@ -12,7 +12,7 @@ Everything below comes from commands run on branch `feat/0.3-pq-commitment` for 
 |---|---|
 | `cargo fmt --all --check` | pass (no output, exit 0) |
 | `cargo clippy --workspace --all-targets -- -D warnings` | pass (`Finished`, no warnings) |
-| `cargo test --workspace` (`SEALDROP_REQUIRE_AGE=1`, Go `age` on `PATH`) | pass: 193 passed, 0 failed, 0 ignored; no line containing "warning" |
+| `cargo test --workspace` (`SEALDROP_REQUIRE_AGE=1`, Go `age` on `PATH`) | pass: 198 passed, 0 failed, 0 ignored; no line containing "warning" |
 | CCTV (`--test cctv`) | `CCTV: total=147 passed=147 failed=0` (no skips) |
 | Interop (`--test interop_age`) | 5 passed, 0 failed (4 run the Go CLI, 1 uses the age crate for scrypt) |
 | Spec vectors (`--test format_vectors`) | 3 passed: 20 vectors `ok`, 12 `stock_age` claims checked against Go age |
@@ -23,13 +23,13 @@ Everything below comes from commands run on branch `feat/0.3-pq-commitment` for 
 
 ## Tests per crate
 
-From `cargo test --workspace > test.log 2>&1` with `SEALDROP_REQUIRE_AGE=1` and `$HOME/go/bin` on `PATH`. The log has no line containing "warning" and 193 lines matching `^test .* ok$`.
+From `cargo test --workspace > test.log 2>&1` with `SEALDROP_REQUIRE_AGE=1` and `$HOME/go/bin` on `PATH`. The log has no line containing "warning" and 198 lines matching `^test .* ok$`. (Counts re-run after the final-review fixes, which added five `sealdrop-core` unit tests: 108 became 113, 193 became 198. The CCTV, interop and vector results below did not change.)
 
 | Crate | Test binary | Passed |
 |---|---|---|
 | sealdrop-cli | unit (`src/main.rs`) | 10 |
 | sealdrop-cli | `tests/cli.rs` | 16 |
-| sealdrop-core | unit (`src/lib.rs`) | 108 |
+| sealdrop-core | unit (`src/lib.rs`) | 113 |
 | sealdrop-core | `tests/cctv.rs` | 1 (runs the 147 CCTV vectors, see below) |
 | sealdrop-core | `tests/format_vectors.rs` | 3 (20 vectors, `stock_age` claims, version parsing) |
 | sealdrop-core | `tests/format_vectors_gen.rs` | 0 (the regeneration test is `#[ignore]`d and needs `--features test-support`) |
@@ -42,14 +42,14 @@ From `cargo test --workspace > test.log 2>&1` with `SEALDROP_REQUIRE_AGE=1` and 
 | sealdrop-release | `tests/cli.rs` | 2 |
 | sealdrop-release | `tests/service.rs` | 12 |
 | Doc-tests | sealdrop_core, sealdrop_release | 0 |
-| **Total** | | **193** (10+16+108+1+3+5+15+1+1+19+2+12) |
+| **Total** | | **198** (10+16+113+1+3+5+15+1+1+19+2+12) |
 
 The `test result` lines from the log, in order (executable hash suffixes dropped, the crate added in parentheses; counts and timings are as printed):
 
 ```
 Running unittests src\main.rs (sealdrop-cli)        test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 Running tests\cli.rs (sealdrop-cli)                 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
-Running unittests src\lib.rs (sealdrop-core)        test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.03s
+Running unittests src\lib.rs (sealdrop-core)        test result: ok. 113 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.32s
 Running tests\cctv.rs                               test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.60s
 Running tests\format_vectors.rs                     test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.99s
 Running tests\format_vectors_gen.rs                 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -207,7 +207,7 @@ Every random source in `crates/sealdrop-core/src` and `crates/sealdrop-release/s
 | `argon2id::Recipient::wrap_file_key`, `crates/sealdrop-core/src/argon2id.rs:107` | `rand::rng().fill_bytes` | the Argon2id salt | panics (same `ThreadRng`) |
 | `passphrase::generate`, `crates/sealdrop-core/src/passphrase.rs:61` | `rand::rng()` with `random_range` | the generated EFF / BIP-39 words | panics (same `ThreadRng`) |
 | `seal.rs:324` | `uuid::Uuid::new_v4` | the package id | panics (same `uuid` code) |
-| `extract.rs:492` | `uuid::Uuid::new_v4` | a suffix for the `.old` backup folder name (not secret) | panics (same `uuid` code) |
+| `extract.rs:520` | `uuid::Uuid::new_v4` | a suffix for the `.old` backup folder name (not secret) | panics (same `uuid` code) |
 | `KeyStore::generate`, `crates/sealdrop-core/src/keys.rs:218` | `minisign::KeyPair::generate_unencrypted_keypair` (getrandom, `minisign-0.10.0/src/keypair.rs:31,34`) | the minisign signing key | returns `Err`, which `keys.rs:218-219` maps to `Error::KeyStore` and the caller reports; nothing is written after it. `identity.txt` has already been written by then, so a failure leaves a partial key store (pre-existing behaviour, not changed here) |
 | `sealdrop-release keygen`, `crates/sealdrop-release/src/main.rs:92` | the same minisign call | the service signing key | returns `Err`, propagated with `?`, so the command exits non-zero before writing a key file |
 | `Db::create_token`, `crates/sealdrop-release/src/db.rs:55` | `rand::RngCore::fill_bytes(&mut rand::rng(), ...)` | the deposit token | panics (same `ThreadRng`) |
@@ -313,14 +313,14 @@ These were validated for 0.2 and are recorded in `docs/VALIDATION.md` at tag v0.
 - `cargo tauri build` (exe, MSI and NSIS installers) and the artefact sizes.
 - The real desktop runs over CDP (`npx tauri dev` against a real `sealdrop-release`, and the release exe), including the Keys and Seal screens with a post-quantum identity.
 - The manual CLI timed-release session against a live `sealdrop-release` (open before expiry exit 0, after expiry exit 2). Timed release is covered here only by the automated tests in the tables above (`sealdrop-release` `tests/service.rs` and `tests/cli.rs`, the `timed-release-*` spec vectors).
-- The seven screenshots in `docs/design/screenshots/`. The Keys-screen image is to be refreshed separately for the post-quantum identity badge.
+- The seven screenshots in `docs/design/screenshots/`, except the Keys screen: `keys.png` was refreshed for 0.3.0 in commit 6d946f7 (identity kind badge, version footer), captured at 1120x760 with playwright against the dev server in mock mode, not the real app (183,620 bytes).
 - Hardware keys: there is still no run against a physical key.
 
 ## Known limitations observed
 
 - **Hidden passphrase prompt not exercised at a terminal.** `open` hides what you type when stdin is a terminal (`rpassword`, `crates/sealdrop-cli/src/commands/open.rs:176-181`) and reads one visible line otherwise (`open.rs:182`). The automated tests and this session use the non-terminal path; typing a passphrase at a real console was not tested.
 - **Timed-release packages do not open in stock age.** By design; stock age reports "no identity matched any of the recipients" (recorded in the 0.2 evidence).
-- **Case-insensitive destinations.** The refusal on open depends on probing the destination folder (`destination_is_case_insensitive`, `crates/sealdrop-core/src/extract.rs:304`). It is covered by unit tests; it was not run on a macOS volume.
+- **Case-insensitive destinations.** The refusal on open depends on probing the destination folder (`destination_is_case_insensitive`, `crates/sealdrop-core/src/extract.rs:314`); a destination that cannot be probed is treated as case-insensitive. It is covered by unit tests; it was not run on a macOS volume.
 - **`age1tagpq1…` is encrypt-only.** There is no identity type for it, so sealdrop cannot open such packages.
 - **Node 20 workaround.** Node here is 20.18.0, below the 20.19 that Vite asks for. The build and `npm test` ran despite the warning.
 - **`cargo deny` warning.** The allow list has an unused entry (`Apache-2.0 WITH LLVM-exception`). The check still reports `advisories ok, licenses ok`.
